@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, interactive-widget=resizes-content">
 <meta name="theme-color" content="#F5F5F7">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -245,6 +245,66 @@ function toggleTheme(){ theme = theme==='dark' ? 'light' : 'dark'; store.set('pl
 applyTheme();
 
 let S = load();
+S.trash = S.trash || [];
+purgeTrash(false);
+
+/* ---------- 휴지통 (15일 보관 후 자동 삭제) ---------- */
+const TRASH_DAYS = 15;
+function purgeTrash(persist=true){
+  if(!S.trash) return;
+  const cut = Date.now() - TRASH_DAYS*864e5;
+  const before = S.trash.length;
+  S.trash = S.trash.filter(t=>t.deletedAt > cut);
+  if(persist && S.trash.length !== before) save();
+}
+function toTrash(kind, item){
+  S.trash.unshift({id:uid(), kind, item, deletedAt:Date.now()});
+}
+function openTrash(){
+  purgeTrash();
+  const icons = {ev:'📅', td:'☑️', mm:'📝'};
+  const rows = S.trash.map(t=>{
+    const dleft = Math.max(0, TRASH_DAYS - Math.floor((Date.now()-t.deletedAt)/864e5));
+    return `<div class="card row">
+      <span>${icons[t.kind]||'📄'}</span>
+      <span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.item.title||'제목 없음')}</span>
+      <span class="badge">D-${dleft}</span>
+      <button class="chip note-add" onclick="restoreTrash('${t.id}')">복원</button>
+      <button class="x" onclick="purgeOne('${t.id}')">✕</button>
+    </div>`;
+  }).join('');
+  openSheetHTML(`<h3>🗑 휴지통</h3>
+    <p class="sub" style="margin:0 0 10px">삭제된 항목은 ${TRASH_DAYS}일간 보관 후 자동으로 사라집니다.</p>
+    ${rows || '<div class="empty">휴지통이 비어 있습니다.</div>'}
+    ${S.trash.length?`<button class="btn" style="background:var(--red);margin-top:10px" onclick="emptyTrash()">모두 비우기</button>`:''}`);
+}
+function restoreTrash(id){
+  const i = S.trash.findIndex(t=>t.id===id); if(i<0) return;
+  const {kind, item} = S.trash[i];
+  const ensureFolder = (folders) => {
+    if(folders.find(f=>f.id===item.folderId)) return;
+    let rf = folders.find(f=>f.name==='복원됨');
+    if(!rf){ rf = {id:uid(), name:'복원됨'}; folders.push(rf); }
+    item.folderId = rf.id;
+  };
+  if(kind==='ev') S.events.push(item);
+  else if(kind==='td'){ ensureFolder(S.todoFolders); S.todos.push(item); }
+  else if(kind==='mm'){ ensureFolder(S.memoFolders); S.memos.unshift(item); if(!memoFolder) memoFolder=item.folderId; }
+  S.trash.splice(i,1);
+  commit(); openTrash();
+}
+function purgeOne(id){ S.trash = S.trash.filter(t=>t.id!==id); commit(); openTrash(); }
+function emptyTrash(){
+  if(!confirm('휴지통을 완전히 비울까요? 복원할 수 없습니다.')) return;
+  S.trash = []; commit(); openTrash();
+}
+
+/* 키보드가 입력란을 가리는 문제 보정 */
+document.addEventListener('focusin', e=>{
+  if(e.target.matches('input,textarea')){
+    setTimeout(()=>{ try{ e.target.scrollIntoView({block:'center', behavior:'smooth'}); }catch(_){} }, 300);
+  }
+});
 function load(){
   const raw = store.get(KEY);
   if(raw){ try{ return JSON.parse(raw); }catch(e){} }
@@ -322,22 +382,26 @@ function renderCalendar(){
   cells.forEach(d=>{
     if(d===null){ grid += `<div class="cell"></div>`; return; }
     const k = keyOf(calY, calM, d);
-    const evs = S.events.filter(e=>e.date===k);
+    const evs = [...S.events.filter(e=>e.date===k), ...sharedEvents.filter(e=>e.date===k), ...gcalEvents.filter(e=>e.date===k)];
     const cls = `cell${k===tk?' today':''}${k===selDate?' sel':''}`;
     let chips = evs.slice(0,2).map(e=>{
       const c = evColor(e);
+      const sh = e._sh ? '👥' : (e._gc ? 'Ⓖ' : '');
       if(e.type==='allday'){
-        return `<div class="ev" style="background:${c};color:#fff">${esc(e.title)}</div>`;
+        return `<div class="ev" style="background:${c};color:#fff">${sh}${esc(e.title)}</div>`;
       }
       const label = (e.type==='timed'? e.start+' ':'') + e.title;
-      return `<div class="ev dotline"><span class="dt" style="background:${c}"></span><em>${esc(label)}</em></div>`;
+      return `<div class="ev dotline"><span class="dt" style="background:${c}"></span><em>${sh}${esc(label)}</em></div>`;
     }).join('');
     if(evs.length>2) chips += `<div class="more">+${evs.length-2}</div>`;
     grid += `<div class="${cls}" onclick="selDate='${k}';render()"><span class="d">${d}</span>${chips}</div>`;
   });
 
   const dayEvs = S.events.filter(e=>e.date===selDate);
-  let detail = dayEvs.length ? '' : `<div class="empty">일정이 없습니다.<br>＋ 버튼으로 추가하세요.</div>`;
+  const sharedDay = sharedEvents.filter(e=>e.date===selDate);
+  const gcalDay = gcalEvents.filter(e=>e.date===selDate);
+  const totalDay = dayEvs.length + sharedDay.length + gcalDay.length;
+  let detail = totalDay ? '' : `<div class="empty">일정이 없습니다.<br>＋ 버튼으로 추가하세요.</div>`;
   dayEvs.forEach(e=>{
     const label = TYPES[e.type][0], c = evColor(e);
     let extra = '';
@@ -354,11 +418,22 @@ function renderCalendar(){
       <div class="row">
         <span class="dot" style="background:${c}"></span>
         <b style="font-size:13px;flex:1">${esc(e.title)}</b>
+        <button class="x" title="공유" onclick="openShare('${e.id}')">👥</button>
         <button class="x" onclick="delEvent('${e.id}')">✕</button>
       </div>
       <div class="sub" style="margin-left:16px">${label}${e.type==='timed'?` · ${e.start} – ${e.end}`:''}</div>
       ${extra}
       ${notesHTML('ev', e)}</div>`;
+  });
+  sharedDay.forEach(e=>{ detail += sharedCardHTML(e); });
+  gcalDay.forEach(e=>{
+    detail += `<div class="card" style="opacity:.85">
+      <div class="row">
+        <span class="dot" style="background:${e.color||'#34A853'}"></span>
+        <b style="font-size:13px;flex:1">Ⓖ ${esc(e.title)}</b>
+      </div>
+      <div class="sub" style="margin-left:16px">구글 캘린더${e.type==='timed'?` · ${e.start} – ${e.end}`:' · 종일'}</div>
+    </div>`;
   });
 
   return `
@@ -370,12 +445,113 @@ function renderCalendar(){
     </div>
     <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
     <div class="grid">${grid}</div>
-    <div class="day-title"><b>${selDate.replaceAll('-','. ')}</b><span class="sub">일정 ${dayEvs.length}개</span></div>
+    <div class="day-title"><b>${selDate.replaceAll('-','. ')}</b><span class="sub">일정 ${totalDay}개</span></div>
     ${detail}`;
 }
 function moveMonth(d){ calM+=d; if(calM<0){calM=11;calY--;} if(calM>11){calM=0;calY++;} render(); }
 function goToday(){ const n=new Date(); calY=n.getFullYear(); calM=n.getMonth(); selDate=todayKey(); render(); }
-function delEvent(id){ S.events=S.events.filter(e=>e.id!==id); commit(); }
+function delEvent(id){
+  const e = S.events.find(x=>x.id===id); if(!e) return;
+  toTrash('ev', e);
+  S.events = S.events.filter(x=>x.id!==id); commit();
+}
+
+/* ---------- 일정 공유 ---------- */
+let sharedEvents = []; // Firestore 'shared' 컬렉션에서 실시간 수신
+window.setSharedEvents = list => { sharedEvents = list.map(e=>({...e, _sh:true})); render(); };
+const myEmail = () => (window.FB && FB.user && FB.user.email || '').toLowerCase();
+
+/* ---------- 구글 캘린더 (읽기 전용 연동) ---------- */
+let gcalEvents = [], gcalAt = null;
+try{
+  const c = JSON.parse(store.get('planner_gcal')||'null');
+  if(c && c.list){ gcalEvents = c.list; gcalAt = c.at; }
+}catch(_){}
+window.setGcal = list => { gcalEvents = list; gcalAt = Date.now(); render(); };
+window.cacheGcal = list => store.set('planner_gcal', JSON.stringify({at:Date.now(), list}));
+function gcalRefresh(){
+  if(!window.FB || !FB.ready){ alert('Firebase 설정 후 사용할 수 있습니다.'); return; }
+  FB.gcalLoad()
+    .then(n=>{ closeSheet(); alert(`구글 캘린더 일정 ${n}개를 불러왔습니다.\n(삼성 캘린더 일정도 구글 계정과 동기화되어 있다면 함께 표시됩니다)`); })
+    .catch(err=>alert('불러오기 실패: '+err.message));
+}
+
+function sharedCardHTML(e){
+  const c = evColor(e);
+  const isOwner = window.FB && FB.user && e.owner === FB.user.uid;
+  const others = (e.members||[]).filter(m=>m!==e.ownerEmail);
+  const comments = (e.comments||[]).map(cm=>`
+    <div class="note"><span><b style="color:var(--text)">${esc((cm.email||'').split('@')[0])}</b> ${esc(cm.text)}
+      <span style="opacity:.6">· ${esc((cm.at||'').slice(5,16))}</span></span></div>`).join('');
+  const memberMgmt = isOwner ? `
+    <div class="notes" style="margin-top:8px">
+      ${others.map(m=>`<div class="note"><span>${esc(m)}</span>
+        <button class="x" onclick="shDelMember('${e.id}','${encodeURIComponent(m)}')">✕</button></div>`).join('')}
+      <input class="note-in" id="am-${e.id}" placeholder="이메일로 멤버 추가 후 엔터"
+        onkeydown="if(event.key==='Enter')shAddMember('${e.id}')">
+    </div>` : '';
+  return `<div class="card" style="border-left:3px solid ${c}">
+    <div class="row">
+      <span class="dot" style="background:${c}"></span>
+      <b style="font-size:13px;flex:1">👥 ${esc(e.title)}</b>
+      ${isOwner?`<button class="x" onclick="shDelete('${e.id}')">✕</button>`:''}
+    </div>
+    <div class="sub" style="margin-left:16px">
+      공유 · ${esc((e.ownerEmail||'').split('@')[0])}님${e.type==='timed'?` · ${e.start} – ${e.end}`:''}
+      · 참여 ${(e.members||[]).length}명</div>
+    <div class="notes" style="margin-top:8px;display:flex">
+      ${comments || '<div class="note"><span style="opacity:.6">아직 댓글이 없습니다.</span></div>'}
+      <input class="note-in" id="cm-${e.id}" placeholder="댓글 입력 후 엔터"
+        onkeydown="if(event.key==='Enter')shComment('${e.id}')">
+    </div>
+    ${memberMgmt}</div>`;
+}
+
+function openShare(eventId){
+  if(!window.FB || !FB.ready){ alert('Firebase 설정 후 사용할 수 있습니다.'); return; }
+  if(!FB.user){ alert('공유하려면 먼저 👤 버튼에서 Google 로그인을 해주세요.'); return; }
+  const e = S.events.find(x=>x.id===eventId); if(!e) return;
+  openSheetHTML(`<h3>일정 공유: ${esc(e.title)}</h3>
+    <p class="sub" style="margin:0 0 8px">초대할 사람의 구글 이메일을 입력하세요.<br>여러 명은 쉼표(,)로 구분합니다.</p>
+    <input id="sh-emails" placeholder="friend@gmail.com" style="margin-bottom:8px">
+    <p class="sub" style="margin:0 0 12px;font-size:11px">
+      상대방도 이 앱 주소에 접속해 같은 방식으로 로그인하면 달력에 자동 표시되고,
+      서로 댓글을 남길 수 있습니다. 공유하면 이 일정은 공유 일정으로 전환됩니다.</p>
+    <button class="btn" onclick="submitShare('${eventId}')">공유 시작</button>`);
+  document.getElementById('sh-emails').focus();
+}
+function submitShare(eventId){
+  const raw = document.getElementById('sh-emails').value;
+  const emails = raw.split(',').map(s=>s.trim().toLowerCase()).filter(s=>s.includes('@'));
+  if(!emails.length){ alert('올바른 이메일을 입력해주세요.'); return; }
+  const e = S.events.find(x=>x.id===eventId); if(!e) return;
+  FB.shareCreate(e, emails).then(()=>{
+    S.events = S.events.filter(x=>x.id!==eventId); // 로컬 → 공유로 전환
+    closeSheet(); commit();
+  }).catch(err=>alert('공유 실패: '+err.message));
+}
+function shComment(id){
+  const el = document.getElementById('cm-'+id);
+  const v = el.value.trim(); if(!v) return;
+  FB.shareComment(id, v).then(()=>{ el.value=''; })
+    .catch(err=>alert('댓글 실패: '+err.message));
+}
+function shAddMember(id){
+  const el = document.getElementById('am-'+id);
+  const v = el.value.trim().toLowerCase();
+  if(!v.includes('@')) return;
+  FB.shareAddMember(id, v).then(()=>{ el.value=''; })
+    .catch(err=>alert('추가 실패: '+err.message));
+}
+function shDelMember(id, enc){
+  const em = decodeURIComponent(enc);
+  if(!confirm(em+' 님을 공유에서 제외할까요?')) return;
+  FB.shareRemoveMember(id, em).catch(err=>alert('실패: '+err.message));
+}
+function shDelete(id){
+  if(!confirm('공유 일정을 삭제할까요? 모든 참여자에게서 사라집니다.')) return;
+  FB.shareDelete(id).catch(err=>alert('삭제 실패: '+err.message));
+}
 function toggleCk(eid,iid){ const e=S.events.find(e=>e.id===eid); const it=e.items.find(i=>i.id===iid); it.done=!it.done; commit(); }
 function addCk(eid,text){ S.events.find(e=>e.id===eid).items.push({id:uid(),text,done:false}); commit(); }
 
@@ -464,7 +640,7 @@ function renderTodo(){
   const folders = S.todoFolders;
   const chips = `<div class="chips">
     <button class="chip ${todoFolder==='ALL'?'on':''}" onclick="todoFolder='ALL';render()">전체</button>
-    ${folders.map(f=>`<button class="chip ${todoFolder===f.id?'on':''}" onclick="todoFolder='${f.id}';render()">${esc(f.name)}</button>`).join('')}
+    ${folders.map(f=>`<button class="chip ${todoFolder===f.id?'on':''}" onclick="selectTodoFolderChip('${f.id}')">${esc(f.name)}</button>`).join('')}
     <button class="chip" onclick="promptTodoFolder()">＋ 폴더</button>
   </div>`;
   const filters = `<div class="chips">
@@ -502,7 +678,56 @@ function renderTodo(){
   return chips + filters + (rows || `<div class="empty">표시할 할 일이 없습니다.</div>`);
 }
 function toggleTodo(id){ const t=S.todos.find(t=>t.id===id); t.done=!t.done; commit(); }
-function delTodo(id){ S.todos=S.todos.filter(t=>t.id!==id); commit(); }
+
+/* ---------- 폴더 관리 (선택된 폴더를 한 번 더 탭) ---------- */
+function selectTodoFolderChip(id){
+  if(todoFolder===id) manageFolder('todo', id);
+  else { todoFolder=id; render(); }
+}
+function selectMemoFolderChip(id){
+  if(memoFolder===id) manageFolder('memo', id);
+  else { memoFolder=id; render(); }
+}
+function manageFolder(kind, id){
+  const arr = kind==='todo' ? S.todoFolders : S.memoFolders;
+  const f = arr.find(x=>x.id===id); if(!f) return;
+  const cnt = kind==='todo'
+    ? S.todos.filter(t=>t.folderId===id).length
+    : S.memos.filter(m=>m.folderId===id).length;
+  openSheetHTML(`<h3>폴더: ${esc(f.name)}</h3>
+    <p class="sub" style="margin:0 0 12px">포함된 항목 ${cnt}개</p>
+    <button class="btn" style="margin-bottom:8px" onclick="renameFolder('${kind}','${id}')">이름 변경</button>
+    <button class="btn" style="background:var(--red)" onclick="deleteFolder('${kind}','${id}')">폴더 삭제</button>`);
+}
+function renameFolder(kind, id){
+  const arr = kind==='todo' ? S.todoFolders : S.memoFolders;
+  const f = arr.find(x=>x.id===id); if(!f) return;
+  const name = prompt('새 폴더 이름', f.name);
+  if(name && name.trim()){ f.name = name.trim(); closeSheet(); commit(); }
+}
+function deleteFolder(kind, id){
+  if(kind==='todo'){
+    const n = S.todos.filter(t=>t.folderId===id).length;
+    if(!confirm(`이 폴더와 포함된 할 일 ${n}개가 삭제됩니다. 계속할까요?`)) return;
+    S.todos.filter(t=>t.folderId===id).forEach(t=>toTrash('td', t));
+    S.todos = S.todos.filter(t=>t.folderId!==id);
+    S.todoFolders = S.todoFolders.filter(f=>f.id!==id);
+    if(todoFolder===id) todoFolder='ALL';
+  } else {
+    const n = S.memos.filter(m=>m.folderId===id).length;
+    if(!confirm(`이 폴더와 포함된 메모 ${n}개가 삭제됩니다. 계속할까요?`)) return;
+    S.memos.filter(m=>m.folderId===id).forEach(m=>toTrash('mm', m));
+    S.memos = S.memos.filter(m=>m.folderId!==id);
+    S.memoFolders = S.memoFolders.filter(f=>f.id!==id);
+    if(memoFolder===id) memoFolder = S.memoFolders[0]?.id || null;
+  }
+  closeSheet(); commit();
+}
+function delTodo(id){
+  const t = S.todos.find(x=>x.id===id); if(!t) return;
+  toTrash('td', t);
+  S.todos = S.todos.filter(x=>x.id!==id); commit();
+}
 function promptTodoFolder(){
   const name = prompt('새 폴더 이름');
   if(name && name.trim()){ const f={id:uid(),name:name.trim()}; S.todoFolders.push(f); todoFolder=f.id; commit(); }
@@ -537,7 +762,7 @@ function openAddTodo(){
 /* ---------- 메모 ---------- */
 function renderMemo(){
   const chips = `<div class="chips">
-    ${S.memoFolders.map(f=>`<button class="chip ${memoFolder===f.id?'on':''}" onclick="memoFolder='${f.id}';render()">${esc(f.name)}</button>`).join('')}
+    ${S.memoFolders.map(f=>`<button class="chip ${memoFolder===f.id?'on':''}" onclick="selectMemoFolderChip('${f.id}')">${esc(f.name)}</button>`).join('')}
     <button class="chip" onclick="promptMemoFolder()">＋ 폴더</button>
   </div>`;
   const list = S.memos.filter(m=>m.folderId===memoFolder)
@@ -589,8 +814,10 @@ function togglePin(){
   document.getElementById('pin-btn').style.opacity = m.pinned? '1':'0.4';
 }
 function deleteMemo(){
-  if(!confirm('이 메모를 삭제할까요?')) return;
-  S.memos = S.memos.filter(m=>m.id!==curMemoId);
+  if(!confirm('이 메모를 삭제할까요? (휴지통에 15일 보관됩니다)')) return;
+  const m = S.memos.find(x=>x.id===curMemoId);
+  if(m) toTrash('mm', m);
+  S.memos = S.memos.filter(x=>x.id!==curMemoId);
   curMemoId = null; save(); closeEditor();
 }
 
@@ -656,11 +883,18 @@ function openAccount(){
       <button class="btn" onclick="FB.login()">Google로 로그인</button>
       <p class="sub" style="margin-top:10px">본인 Firebase 프로젝트(무료)에만 저장되며 외부로 전송되지 않습니다.</p>`;
   } else {
+    const gc = gcalAt ? new Date(gcalAt) : null;
+    const gcTime = gc ? `${String(gc.getMonth()+1)}/${gc.getDate()} ${String(gc.getHours()).padStart(2,'0')}:${String(gc.getMinutes()).padStart(2,'0')}` : '없음';
     inner = `
       <p style="font-size:13px;margin:0 0 4px"><b>${esc(fb.user.email||'')}</b></p>
       <p class="sub" style="margin:0 0 12px">마지막 동기화: <span id="acc-last">${fb.lastSync||'-'}</span></p>
+      <button class="btn" style="margin-bottom:8px" onclick="gcalRefresh()">Ⓖ 구글 캘린더 불러오기</button>
+      <p class="sub" style="margin:0 0 12px;font-size:11px">
+        마지막 불러오기: ${gcTime} · 지난달~2개월 뒤 일정을 읽어옵니다.<br>
+        삼성 캘린더는 삼성 캘린더 앱 설정에서 구글 계정을 연결하면 함께 표시됩니다.</p>
       <button class="btn" style="background:var(--soft);color:var(--text)" onclick="FB.logout()">로그아웃</button>`;
   }
+  inner += `<button class="chip" style="margin-top:14px" onclick="openTrash()">🗑 휴지통 (${(S.trash||[]).length})</button>`;
   openSheetHTML(`<h3>계정 · 동기화</h3>${inner}`);
 }
 function setSyncDot(color){ const d=document.getElementById('sync-dot'); if(d) d.style.background=color; }
@@ -716,7 +950,8 @@ if (FIREBASE_CONFIG.apiKey) {
     const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
     const { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } =
       await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
-    const { getFirestore, doc, getDoc, setDoc, onSnapshot } =
+    const { getFirestore, doc, getDoc, setDoc, onSnapshot,
+            collection, query, where, updateDoc, deleteDoc, arrayUnion, arrayRemove } =
       await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
 
     const app = initializeApp(FIREBASE_CONFIG);
@@ -782,9 +1017,85 @@ if (FIREBASE_CONFIG.apiKey) {
 
     onAuthStateChanged(auth, u => {
       FB.user = u;
-      if (u) startSync();
-      else { if (unsub) unsub(); unsub = null; setSyncDot('#C7C7CC'); }
+      if (u) { startSync(); startShared(); }
+      else {
+        if (unsub) unsub(); unsub = null;
+        if (shUnsub) shUnsub(); shUnsub = null;
+        window.setSharedEvents([]);
+        setSyncDot('#C7C7CC');
+      }
     });
+
+    /* ----- 공유 일정 ----- */
+    let shUnsub = null;
+    function startShared() {
+      const em = (FB.user.email || '').toLowerCase();
+      shUnsub = onSnapshot(
+        query(collection(db, 'shared'), where('members', 'array-contains', em)),
+        snap => {
+          const list = [];
+          snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+          window.setSharedEvents(list);
+        },
+        err => console.error('shared sub', err)
+      );
+    }
+    FB.shareCreate = async (ev, emails) => {
+      const em = (FB.user.email || '').toLowerCase();
+      const ref = doc(collection(db, 'shared'));
+      await setDoc(ref, {
+        owner: FB.user.uid,
+        ownerEmail: em,
+        members: [em, ...emails.filter(e => e !== em)],
+        comments: [],
+        created: Date.now(),
+        date: ev.date, type: ev.type, title: ev.title,
+        start: ev.start || '', end: ev.end || '', color: ev.color || '#0A6CFF'
+      });
+    };
+    FB.shareComment = (id, text) => updateDoc(doc(db, 'shared', id), {
+      comments: arrayUnion({ id: String(Date.now()), email: (FB.user.email||'').toLowerCase(), text, at: nowStr() })
+    });
+    FB.shareAddMember = (id, email) => updateDoc(doc(db, 'shared', id), { members: arrayUnion(email) });
+    FB.shareRemoveMember = (id, email) => updateDoc(doc(db, 'shared', id), { members: arrayRemove(email) });
+    FB.shareDelete = (id) => deleteDoc(doc(db, 'shared', id));
+
+    /* ----- 구글 캘린더 읽어오기 (Calendar API) ----- */
+    FB.gcalLoad = async () => {
+      const provider = new GoogleAuthProvider();
+      provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
+      const res = await signInWithPopup(auth, provider);
+      const cred = GoogleAuthProvider.credentialFromResult(res);
+      const token = cred && cred.accessToken;
+      if (!token) throw new Error('액세스 토큰을 받지 못했습니다.');
+      const now = new Date();
+      const tMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+      const tMax = new Date(now.getFullYear(), now.getMonth() + 3, 1).toISOString();
+      const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+        + `?timeMin=${encodeURIComponent(tMin)}&timeMax=${encodeURIComponent(tMax)}`
+        + '&singleEvents=true&orderBy=startTime&maxResults=250';
+      const r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+      if (!r.ok) {
+        throw new Error('Calendar API ' + r.status
+          + ' — Google Cloud 콘솔에서 "Google Calendar API" 사용 설정이 필요할 수 있습니다.');
+      }
+      const j = await r.json();
+      const list = (j.items || []).map(it => {
+        const allday = !!(it.start && it.start.date);
+        const date = allday ? it.start.date : String(it.start && it.start.dateTime || '').slice(0, 10);
+        return {
+          id: 'g' + it.id, date,
+          type: allday ? 'allday' : 'timed',
+          title: it.summary || '(제목 없음)',
+          start: allday ? '' : String(it.start.dateTime).slice(11, 16),
+          end: allday ? '' : String(it.end && it.end.dateTime || '').slice(11, 16),
+          color: '#34A853', _gc: true
+        };
+      }).filter(e => e.date);
+      window.cacheGcal(list);
+      window.setGcal(list);
+      return list.length;
+    };
 
     FB.login = async () => {
       try { await signInWithPopup(auth, new GoogleAuthProvider()); closeSheet(); }

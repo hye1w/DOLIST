@@ -154,9 +154,13 @@
   /* 검색 */
   .sec{font-size:11px; font-weight:700; letter-spacing:.4px; color:var(--sub); margin:14px 2px 6px;}
   /* 자식 메모 */
-  .notes{margin-top:6px; padding-left:8px; border-left:2px solid var(--border); display:flex; flex-direction:column; gap:2px;}
-  .note{display:flex; align-items:flex-start; gap:6px; font-size:12px; color:var(--sub); line-height:1.5;}
+  .notes{margin-top:8px; display:flex; flex-direction:column; gap:4px;}
+  .note{display:flex; align-items:center; gap:8px; background:var(--soft3);
+    border-radius:10px; padding:7px 10px 7px 12px; font-size:12.5px; color:var(--text);
+    line-height:1.55; cursor:pointer;}
+  .note::before{content:'↳'; color:var(--sub); font-size:11px; flex-shrink:0;}
   .note span{flex:1; white-space:pre-wrap; word-break:break-word;}
+  .note .x{opacity:.7;}
   .note-add{font-size:11px; padding:4px 10px;}
   .note-in{font-size:12px; padding:7px 10px; margin-top:4px;}
   .chip .fdot{display:inline-block; width:8px; height:8px; border-radius:8px; margin-right:5px; vertical-align:middle;}
@@ -486,6 +490,8 @@ function _mSubmit(){
   const v = document.getElementById('modal-in') ? document.getElementById('modal-in').value : '';
   const cb=_mCb; closeModal(); if(cb) cb(v);
 }
+window._nativeAlert = window.alert;
+window.alert = m => appAlert(String(m));
 function appAlert(msg, title){
   _modal(`<div class="modal-t">${esc(title||'알림')}</div>
     <p class="modal-m">${esc(msg)}</p>
@@ -997,9 +1003,9 @@ function notesHTML(kind, item){
   const notes = item.notes || [];
   const key = kind + item.id;
   const list = notes.map(n=>`
-    <div class="note">
+    <div class="note" onclick="editNote('${kind}','${item.id}','${n.id}')">
       <span>${esc(n.text)}</span>
-      <button class="x" onclick="delNote('${kind}','${item.id}','${n.id}')">✕</button>
+      <button class="x" onclick="event.stopPropagation();delNote('${kind}','${item.id}','${n.id}')">✕</button>
     </div>`).join('');
   const input = noteOpen[key]
     ? `<input class="note-in" placeholder="하위 메모 입력 후 엔터" autofocus
@@ -1014,6 +1020,18 @@ function toggleNoteInput(kind,id){
   noteOpen[key] = !noteOpen[key];
   render();
   if(curMemoId && kind==='mm') renderEditorNotes();
+}
+function editNote(kind,id,nid){
+  const p = findParent(kind,id); if(!p || !p.notes) return;
+  const n = p.notes.find(x=>x.id===nid); if(!n) return;
+  appPrompt('내용을 수정하세요.', n.text, v=>{
+    if(v && v.trim()){
+      n.text = v.trim();
+      if(kind==='mm' && p.updated!==undefined) p.updated = nowStr();
+      commit();
+      if(kind==='mm') renderEditorNotes();
+    }
+  }, {title:'하위 메모 수정', yes:'저장'});
 }
 function addNote(kind,id,text){
   const p = findParent(kind,id); if(!p) return;

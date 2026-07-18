@@ -86,7 +86,8 @@
     font-size:14px; font-weight:600; padding:12px; width:100%; font-family:inherit;
   }
   .row{display:flex; align-items:center; gap:8px;}
-  .x{border:none; background:none; color:var(--sub); font-size:13px; padding:4px;}
+  .x{border:none; background:none; color:var(--sub); font-size:13px; padding:4px;
+    display:inline-flex; align-items:center; justify-content:center;}
   /* FAB */
   .fab{
     position:fixed; right:18px; bottom:calc(72px + env(safe-area-inset-bottom,0px));
@@ -288,6 +289,10 @@ const uid = () => String(++_id);
 const TYPES = { allday:['종일','var(--blue)'], timed:['시간','var(--purple)'], memo:['메모','var(--orange)'], checklist:['체크','var(--green)'] };
 const PRI = { high:['높음','var(--red)'], mid:['중간','var(--orange)'], low:['낮음','var(--green)'] };
 const PALETTE = ['#0A6CFF','#BF5AF2','#FF453A','#FF9F0A','#28C840','#64D2FF','#FF6482','#8E8E93'];
+const ICO_EDIT = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+  stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:block">
+  <path d="M12 4.5H6a2 2 0 0 0-2 2v11.5a2 2 0 0 0 2 2h11.5a2 2 0 0 0 2-2V12"/>
+  <path d="M18.2 2.9a1.9 1.9 0 0 1 2.7 2.7L13 13.5l-3.6.9.9-3.6z"/></svg>`;
 const evColor = e => e.color || {allday:'#0A6CFF',timed:'#BF5AF2',memo:'#FF9F0A',checklist:'#28C840'}[e.type];
 
 /* 테마 (다크모드) */
@@ -815,7 +820,7 @@ function dayDetailHTML(){
       <div class="row">
         <span class="dot" style="background:${c}"></span>
         <b style="font-size:13px;flex:1">${esc(e.title)}</b>
-        <button class="x" title="수정" onclick="openEventSheet('${e.id}')">✎</button>
+        <button class="x" title="수정" onclick="openEventSheet('${e.id}')">${ICO_EDIT}</button>
         <button class="x" title="공유" onclick="openShare('${e.id}')">👥</button>
         <button class="x" onclick="delEvent('${e.id}')">✕</button>
       </div>
@@ -832,7 +837,7 @@ function dayDetailHTML(){
         <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
         <span class="t ${t.done?'done':''}">☑ ${esc(t.title)}</span>
         <span class="sub">${esc(fObj?.name||'')}</span>
-        <button class="x" onclick="openEditTodo('${t.id}')">✎</button>
+        <button class="x" onclick="openEditTodo('${t.id}')">${ICO_EDIT}</button>
       </div>
     </div>`;
   });
@@ -1244,7 +1249,7 @@ function renderTodo(){
         <span class="t ${t.done?'done':''}">${esc(t.title)}</span>
         ${folder}
         ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
-        <button class="x" onclick="openEditTodo('${t.id}')">✎</button>
+        <button class="x" onclick="openEditTodo('${t.id}')">${ICO_EDIT}</button>
         <button class="x" onclick="delTodo('${t.id}')">✕</button>
       </div>
       ${notesHTML('td', t)}

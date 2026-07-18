@@ -14,8 +14,17 @@
   :root{
     --bg:#F5F5F7; --panel:#EFEFF2; --card:#FFFFFF;
     --text:#1D1D1F; --sub:#86868B; --border:rgba(0,0,0,.08);
+    --soft:rgba(0,0,0,.05); --soft2:rgba(0,0,0,.045); --soft3:rgba(0,0,0,.03);
     --blue:#0A6CFF; --blue-soft:rgba(10,108,255,.1);
     --red:#FF453A; --orange:#FF9F0A; --green:#28C840; --purple:#BF5AF2;
+    --nav-bg:rgba(245,245,247,.95);
+  }
+  [data-theme="dark"]{
+    --bg:#1C1C1E; --panel:#242426; --card:#2C2C2E;
+    --text:#F2F2F7; --sub:#98989E; --border:rgba(255,255,255,.12);
+    --soft:rgba(255,255,255,.10); --soft2:rgba(255,255,255,.08); --soft3:rgba(255,255,255,.06);
+    --blue:#0A84FF; --blue-soft:rgba(10,132,255,.2);
+    --nav-bg:rgba(28,28,30,.95);
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0; height:100%; overscroll-behavior:none;}
@@ -32,14 +41,14 @@
   header h1{font-size:19px; font-weight:700; margin:0; flex:1;}
   .icon-btn{
     width:34px; height:34px; border:none; border-radius:10px;
-    background:rgba(0,0,0,.05); color:var(--text); font-size:16px;
+    background:var(--soft); color:var(--text); font-size:16px;
     display:flex; align-items:center; justify-content:center;
   }
   main{flex:1; overflow-y:auto; padding:0 16px 90px;}
   /* 하단 탭 */
   nav{
     position:fixed; left:0; right:0; bottom:0; z-index:10;
-    display:flex; background:rgba(245,245,247,.95); backdrop-filter:blur(16px);
+    display:flex; background:var(--nav-bg); backdrop-filter:blur(16px);
     border-top:1px solid var(--border);
     padding-bottom:env(safe-area-inset-bottom,0px);
   }
@@ -52,9 +61,9 @@
   /* 공통 */
   .chip{
     display:inline-block; border:none; padding:6px 13px; border-radius:20px;
-    background:rgba(0,0,0,.05); color:var(--text); font-size:12px; font-family:inherit;
+    background:var(--soft); color:var(--text); font-size:12px; font-family:inherit;
   }
-  .chip.on{background:var(--text); color:#fff; font-weight:600;}
+  .chip.on{background:var(--text); color:var(--bg); font-weight:600;}
   .chips{display:flex; gap:6px; overflow-x:auto; padding:4px 0 10px; scrollbar-width:none;}
   .chips::-webkit-scrollbar{display:none;}
   .card{
@@ -65,11 +74,11 @@
   .dot{display:inline-block; width:8px; height:8px; border-radius:8px; flex-shrink:0;}
   .empty{
     text-align:center; color:var(--sub); font-size:13px;
-    background:rgba(0,0,0,.03); border-radius:14px; padding:32px 16px;
+    background:var(--soft3); border-radius:14px; padding:32px 16px;
   }
   input,select,textarea{
     font-family:inherit; font-size:14px; color:var(--text);
-    background:rgba(0,0,0,.045); border:none; border-radius:10px;
+    background:var(--soft2); border:none; border-radius:10px;
     padding:10px 12px; outline:none; width:100%;
   }
   .btn{
@@ -80,7 +89,7 @@
   .x{border:none; background:none; color:var(--sub); font-size:13px; padding:4px;}
   /* FAB */
   .fab{
-    position:fixed; right:18px; bottom:calc(72px + env(safe-area-inset-bottom,0px));
+    position:fixed; left:50%; transform:translateX(-50%); bottom:calc(72px + env(safe-area-inset-bottom,0px));
     width:52px; height:52px; border-radius:50%; border:none; z-index:9;
     background:var(--blue); color:#fff; font-size:26px;
     box-shadow:0 6px 16px rgba(10,108,255,.35);
@@ -130,7 +139,7 @@
   .todo{display:flex; align-items:center; gap:9px;}
   .todo input[type=checkbox]{width:18px; height:18px; accent-color:var(--blue); flex-shrink:0; padding:0;}
   .todo .t{flex:1; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .badge{font-size:10px; padding:2px 8px; border-radius:12px; background:rgba(0,0,0,.05); color:var(--sub); flex-shrink:0;}
+  .badge{font-size:10px; padding:2px 8px; border-radius:12px; background:var(--soft); color:var(--sub); flex-shrink:0;}
   .badge.over{background:var(--red); color:#fff;}
   /* 메모 */
   .memo-item .ttl{font-size:13px; font-weight:600; display:flex; gap:4px; align-items:center;}
@@ -143,6 +152,20 @@
   .editor .body{flex:1; display:flex; flex-direction:column; padding:0 16px calc(16px + env(safe-area-inset-bottom,0px));}
   /* 검색 */
   .sec{font-size:11px; font-weight:700; letter-spacing:.4px; color:var(--sub); margin:14px 2px 6px;}
+  /* 자식 메모 */
+  .notes{margin-top:6px; padding-left:8px; border-left:2px solid var(--border); display:flex; flex-direction:column; gap:2px;}
+  .note{display:flex; align-items:flex-start; gap:6px; font-size:12px; color:var(--sub); line-height:1.5;}
+  .note span{flex:1; white-space:pre-wrap; word-break:break-word;}
+  .note-add{font-size:11px; padding:4px 10px;}
+  .note-in{font-size:12px; padding:7px 10px; margin-top:4px;}
+  /* 색상 선택 */
+  .swatches{display:flex; gap:8px; flex-wrap:wrap; padding:2px 0 12px;}
+  .sw{width:26px; height:26px; border-radius:50%; border:2px solid transparent; padding:0;}
+  .sw.on{border-color:var(--text); box-shadow:0 0 0 2px var(--bg) inset;}
+  /* 달력 dot 형 일정 */
+  .ev.dotline{display:flex; align-items:center; gap:3px; background:none !important; color:var(--text); padding-left:0;}
+  .ev.dotline .dt{width:5px; height:5px; border-radius:5px; flex-shrink:0;}
+  .ev.dotline em{font-style:normal; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -150,6 +173,7 @@
 <header>
   <h1 id="page-title">달력</h1>
   <span id="sync-dot" class="dot" style="background:#C7C7CC" title="동기화 상태"></span>
+  <button class="icon-btn" id="theme-btn" onclick="toggleTheme()">🌙</button>
   <button class="icon-btn" onclick="openAccount()">👤</button>
   <button class="icon-btn" onclick="openSearch()">🔍</button>
 </header>
@@ -181,6 +205,7 @@
     <input class="ttl" id="ed-title" placeholder="제목" oninput="editMemo()">
     <div class="sub" id="ed-updated"></div>
     <textarea id="ed-body" placeholder="메모를 입력하세요…" oninput="editMemo()"></textarea>
+    <div id="ed-notes" style="padding:8px 0 0"></div>
   </div>
 </div>
 
@@ -203,6 +228,21 @@ const uid = () => String(++_id);
 
 const TYPES = { allday:['종일','var(--blue)'], timed:['시간','var(--purple)'], memo:['메모','var(--orange)'], checklist:['체크','var(--green)'] };
 const PRI = { high:['높음','var(--red)'], mid:['중간','var(--orange)'], low:['낮음','var(--green)'] };
+const PALETTE = ['#0A6CFF','#BF5AF2','#FF453A','#FF9F0A','#28C840','#64D2FF','#FF6482','#8E8E93'];
+const evColor = e => e.color || {allday:'#0A6CFF',timed:'#BF5AF2',memo:'#FF9F0A',checklist:'#28C840'}[e.type];
+
+/* 테마 (다크모드) */
+let theme = store.get('planner_theme')
+  || (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+function applyTheme(){
+  document.documentElement.dataset.theme = theme;
+  const btn = document.getElementById('theme-btn');
+  if(btn) btn.textContent = theme==='dark' ? '☀️' : '🌙';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.content = theme==='dark' ? '#1C1C1E' : '#F5F5F7';
+}
+function toggleTheme(){ theme = theme==='dark' ? 'light' : 'dark'; store.set('planner_theme', theme); applyTheme(); }
+applyTheme();
 
 let S = load();
 function load(){
@@ -285,9 +325,12 @@ function renderCalendar(){
     const evs = S.events.filter(e=>e.date===k);
     const cls = `cell${k===tk?' today':''}${k===selDate?' sel':''}`;
     let chips = evs.slice(0,2).map(e=>{
-      const c = TYPES[e.type][1];
+      const c = evColor(e);
+      if(e.type==='allday'){
+        return `<div class="ev" style="background:${c};color:#fff">${esc(e.title)}</div>`;
+      }
       const label = (e.type==='timed'? e.start+' ':'') + e.title;
-      return `<div class="ev" style="color:${c};background:color-mix(in srgb,${c} 12%,transparent)">${esc(label)}</div>`;
+      return `<div class="ev dotline"><span class="dt" style="background:${c}"></span><em>${esc(label)}</em></div>`;
     }).join('');
     if(evs.length>2) chips += `<div class="more">+${evs.length-2}</div>`;
     grid += `<div class="${cls}" onclick="selDate='${k}';render()"><span class="d">${d}</span>${chips}</div>`;
@@ -296,7 +339,7 @@ function renderCalendar(){
   const dayEvs = S.events.filter(e=>e.date===selDate);
   let detail = dayEvs.length ? '' : `<div class="empty">일정이 없습니다.<br>＋ 버튼으로 추가하세요.</div>`;
   dayEvs.forEach(e=>{
-    const [label,c] = TYPES[e.type];
+    const label = TYPES[e.type][0], c = evColor(e);
     let extra = '';
     if(e.type==='checklist'){
       extra = (e.items||[]).map(it=>`
@@ -314,7 +357,8 @@ function renderCalendar(){
         <button class="x" onclick="delEvent('${e.id}')">✕</button>
       </div>
       <div class="sub" style="margin-left:16px">${label}${e.type==='timed'?` · ${e.start} – ${e.end}`:''}</div>
-      ${extra}</div>`;
+      ${extra}
+      ${notesHTML('ev', e)}</div>`;
   });
 
   return `
@@ -335,8 +379,51 @@ function delEvent(id){ S.events=S.events.filter(e=>e.id!==id); commit(); }
 function toggleCk(eid,iid){ const e=S.events.find(e=>e.id===eid); const it=e.items.find(i=>i.id===iid); it.done=!it.done; commit(); }
 function addCk(eid,text){ S.events.find(e=>e.id===eid).items.push({id:uid(),text,done:false}); commit(); }
 
+/* ---------- 자식 메모 (일정/할일/메모 공용) ---------- */
+let noteOpen = {}; // 입력창 펼침 상태
+function findParent(kind, id){
+  return kind==='ev' ? S.events.find(x=>x.id===id)
+       : kind==='td' ? S.todos.find(x=>x.id===id)
+       : S.memos.find(x=>x.id===id);
+}
+function notesHTML(kind, item){
+  const notes = item.notes || [];
+  const key = kind + item.id;
+  const list = notes.map(n=>`
+    <div class="note">
+      <span>${esc(n.text)}</span>
+      <button class="x" onclick="delNote('${kind}','${item.id}','${n.id}')">✕</button>
+    </div>`).join('');
+  const input = noteOpen[key]
+    ? `<input class="note-in" placeholder="하위 메모 입력 후 엔터" autofocus
+         onkeydown="if(event.key==='Enter'&&this.value.trim()){addNote('${kind}','${item.id}',this.value.trim());}">`
+    : '';
+  return `<div class="notes" style="display:${notes.length||noteOpen[key]?'flex':'none'}">${list}${input}</div>
+    <button class="chip note-add" onclick="toggleNoteInput('${kind}','${item.id}')" style="margin-top:6px">
+      ${noteOpen[key]?'입력 닫기':'＋ 하위 메모'}${notes.length?` (${notes.length})`:''}</button>`;
+}
+function toggleNoteInput(kind,id){
+  const key = kind+id;
+  noteOpen[key] = !noteOpen[key];
+  render();
+  if(curMemoId && kind==='mm') renderEditorNotes();
+}
+function addNote(kind,id,text){
+  const p = findParent(kind,id); if(!p) return;
+  (p.notes = p.notes || []).push({id:uid(), text});
+  if(kind==='mm' && p.updated!==undefined) p.updated = nowStr();
+  commit();
+  if(kind==='mm') renderEditorNotes();
+}
+function delNote(kind,id,nid){
+  const p = findParent(kind,id); if(!p || !p.notes) return;
+  p.notes = p.notes.filter(n=>n.id!==nid);
+  commit();
+  if(kind==='mm') renderEditorNotes();
+}
+
 function openAddEvent(){
-  let type='allday';
+  let type='allday', color=PALETTE[0];
   const html = () => `
     <h3>${selDate.replaceAll('-','. ')} 일정 추가</h3>
     <div class="chips">${Object.entries(TYPES).map(([k,[l]])=>
@@ -346,12 +433,24 @@ function openAddEvent(){
       <input type="time" id="ae-start" value="09:00">
       <input type="time" id="ae-end" value="10:00">
     </div>
+    <div class="sub" style="margin-bottom:4px">색상</div>
+    <div class="swatches">${PALETTE.map(c=>
+      `<button class="sw ${color===c?'on':''}" style="background:${c}" onclick="window._setColor('${c}')"></button>`).join('')}</div>
     <button class="btn" onclick="window._submitEvent()">추가</button>`;
-  window._setType = t => { type=t; const ti=document.getElementById('ae-title').value; openSheetHTML(html()); document.getElementById('ae-title').value=ti; };
+  const keep = fn => {
+    const ti=document.getElementById('ae-title').value;
+    const s=document.getElementById('ae-start').value, en=document.getElementById('ae-end').value;
+    fn(); openSheetHTML(html());
+    document.getElementById('ae-title').value=ti;
+    document.getElementById('ae-start').value=s;
+    document.getElementById('ae-end').value=en;
+  };
+  window._setType = t => keep(()=>type=t);
+  window._setColor = c => keep(()=>color=c);
   window._submitEvent = () => {
     const title = document.getElementById('ae-title').value.trim();
     if(!title) return;
-    const ev = {id:uid(),date:selDate,type,title};
+    const ev = {id:uid(),date:selDate,type,title,color};
     if(type==='timed'){ ev.start=document.getElementById('ae-start').value; ev.end=document.getElementById('ae-end').value; }
     if(type==='checklist') ev.items=[];
     S.events.push(ev); closeSheet(); commit();
@@ -387,13 +486,16 @@ function renderTodo(){
   const rows = list.map(t=>{
     const over = t.due && !t.done && t.due < tk;
     const folder = todoFolder==='ALL' ? `<span class="sub">${esc(folders.find(f=>f.id===t.folderId)?.name||'')}</span>` : '';
-    return `<div class="card todo">
-      <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
-      <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
-      <span class="t ${t.done?'done':''}">${esc(t.title)}</span>
-      ${folder}
-      ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
-      <button class="x" onclick="delTodo('${t.id}')">✕</button>
+    return `<div class="card">
+      <div class="todo">
+        <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
+        <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
+        <span class="t ${t.done?'done':''}">${esc(t.title)}</span>
+        ${folder}
+        ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
+        <button class="x" onclick="delTodo('${t.id}')">✕</button>
+      </div>
+      ${notesHTML('td', t)}
     </div>`;
   }).join('');
 
@@ -443,7 +545,7 @@ function renderMemo(){
   const rows = list.map(m=>`
     <div class="card memo-item" onclick="openEditor('${m.id}')">
       <div class="ttl">${m.pinned?'📌 ':''}${esc(m.title||'제목 없음')}</div>
-      <div class="pv">${m.updated.slice(5,16)} · ${esc((m.body||'').split('\n')[0]||'내용 없음')}</div>
+      <div class="pv">${m.updated.slice(5,16)}${(m.notes||[]).length?` · 하위 ${m.notes.length}`:''} · ${esc((m.body||'').split('\n')[0]||'내용 없음')}</div>
     </div>`).join('');
   return chips + (rows || `<div class="empty">메모가 없습니다.<br>＋ 버튼으로 새로 만드세요.</div>`);
 }
@@ -464,6 +566,13 @@ function openEditor(id){
   document.getElementById('ed-updated').textContent = '수정: '+m.updated;
   document.getElementById('pin-btn').style.opacity = m.pinned? '1':'0.4';
   document.getElementById('editor').classList.add('open');
+  renderEditorNotes();
+}
+function renderEditorNotes(){
+  const m = S.memos.find(m=>m.id===curMemoId);
+  const box = document.getElementById('ed-notes');
+  if(!m || !box){ if(box) box.innerHTML=''; return; }
+  box.innerHTML = notesHTML('mm', m);
 }
 function closeEditor(){ document.getElementById('editor').classList.remove('open'); render(); }
 function editMemo(){
@@ -500,15 +609,16 @@ function refreshSearch(){
 }
 function searchResultsHTML(q){
   if(!q.trim()) return `<div class="empty" style="margin-top:10px">검색어를 입력하세요.</div>`;
-  const ev = S.events.filter(e=>e.title.toLowerCase().includes(q));
-  const td = S.todos.filter(t=>t.title.toLowerCase().includes(q));
-  const mm = S.memos.filter(m=>(m.title+'\n'+m.body).toLowerCase().includes(q));
+  const nt = x => (x.notes||[]).map(n=>n.text).join('\n');
+  const ev = S.events.filter(e=>(e.title+'\n'+nt(e)).toLowerCase().includes(q));
+  const td = S.todos.filter(t=>(t.title+'\n'+nt(t)).toLowerCase().includes(q));
+  const mm = S.memos.filter(m=>(m.title+'\n'+m.body+'\n'+nt(m)).toLowerCase().includes(q));
   const total = ev.length+td.length+mm.length;
   if(!total) return `<div class="empty" style="margin-top:10px">결과가 없습니다.</div>`;
   let h = `<div class="sub" style="margin:6px 2px">${total}개 항목</div>`;
   if(ev.length) h += `<div class="sec">일정</div>` + ev.map(e=>`
     <div class="card row" onclick="jumpDate('${e.date}')">
-      <span class="dot" style="background:${TYPES[e.type][1]}"></span>
+      <span class="dot" style="background:${evColor(e)}"></span>
       <span style="flex:1;font-size:13px">${esc(e.title)}</span><span class="sub">${e.date}</span>
     </div>`).join('');
   if(td.length) h += `<div class="sec">할 일</div>` + td.map(t=>`
@@ -549,7 +659,7 @@ function openAccount(){
     inner = `
       <p style="font-size:13px;margin:0 0 4px"><b>${esc(fb.user.email||'')}</b></p>
       <p class="sub" style="margin:0 0 12px">마지막 동기화: <span id="acc-last">${fb.lastSync||'-'}</span></p>
-      <button class="btn" style="background:rgba(0,0,0,.07);color:var(--text)" onclick="FB.logout()">로그아웃</button>`;
+      <button class="btn" style="background:var(--soft);color:var(--text)" onclick="FB.logout()">로그아웃</button>`;
   }
   openSheetHTML(`<h3>계정 · 동기화</h3>${inner}`);
 }

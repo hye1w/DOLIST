@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#F5F5F7">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>플래너</title>
+<style>
+  :root{
+    --bg:#F5F5F7; --panel:#EFEFF2; --card:#FFFFFF;
+    --text:#1D1D1F; --sub:#86868B; --border:rgba(0,0,0,.08);
+    --blue:#0A6CFF; --blue-soft:rgba(10,108,255,.1);
+    --red:#FF453A; --orange:#FF9F0A; --green:#28C840; --purple:#BF5AF2;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; height:100%; overscroll-behavior:none;}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Segoe UI",sans-serif;
+    font-size:14px; display:flex; flex-direction:column;
+  }
+  header{
+    display:flex; align-items:center; gap:8px;
+    padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 10px;
+    background:var(--bg); position:sticky; top:0; z-index:5;
+  }
+  header h1{font-size:19px; font-weight:700; margin:0; flex:1;}
+  .icon-btn{
+    width:34px; height:34px; border:none; border-radius:10px;
+    background:rgba(0,0,0,.05); color:var(--text); font-size:16px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  main{flex:1; overflow-y:auto; padding:0 16px 90px;}
+  /* 하단 탭 */
+  nav{
+    position:fixed; left:0; right:0; bottom:0; z-index:10;
+    display:flex; background:rgba(245,245,247,.95); backdrop-filter:blur(16px);
+    border-top:1px solid var(--border);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  nav button{
+    flex:1; border:none; background:none; padding:8px 0 6px;
+    font-size:11px; color:var(--sub); font-family:inherit;
+  }
+  nav button .ic{display:block; font-size:20px; margin-bottom:2px;}
+  nav button.on{color:var(--blue); font-weight:600;}
+  /* 공통 */
+  .chip{
+    display:inline-block; border:none; padding:6px 13px; border-radius:20px;
+    background:rgba(0,0,0,.05); color:var(--text); font-size:12px; font-family:inherit;
+  }
+  .chip.on{background:var(--text); color:#fff; font-weight:600;}
+  .chips{display:flex; gap:6px; overflow-x:auto; padding:4px 0 10px; scrollbar-width:none;}
+  .chips::-webkit-scrollbar{display:none;}
+  .card{
+    background:var(--card); border:1px solid var(--border); border-radius:14px;
+    padding:12px; margin-bottom:8px;
+  }
+  .sub{color:var(--sub); font-size:11px;}
+  .dot{display:inline-block; width:8px; height:8px; border-radius:8px; flex-shrink:0;}
+  .empty{
+    text-align:center; color:var(--sub); font-size:13px;
+    background:rgba(0,0,0,.03); border-radius:14px; padding:32px 16px;
+  }
+  input,select,textarea{
+    font-family:inherit; font-size:14px; color:var(--text);
+    background:rgba(0,0,0,.045); border:none; border-radius:10px;
+    padding:10px 12px; outline:none; width:100%;
+  }
+  .btn{
+    border:none; border-radius:12px; background:var(--blue); color:#fff;
+    font-size:14px; font-weight:600; padding:12px; width:100%; font-family:inherit;
+  }
+  .row{display:flex; align-items:center; gap:8px;}
+  .x{border:none; background:none; color:var(--sub); font-size:13px; padding:4px;}
+  /* FAB */
+  .fab{
+    position:fixed; right:18px; bottom:calc(72px + env(safe-area-inset-bottom,0px));
+    width:52px; height:52px; border-radius:50%; border:none; z-index:9;
+    background:var(--blue); color:#fff; font-size:26px;
+    box-shadow:0 6px 16px rgba(10,108,255,.35);
+  }
+  /* 바텀 시트 */
+  .sheet-bg{
+    position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:20;
+    display:none; align-items:flex-end;
+  }
+  .sheet-bg.open{display:flex;}
+  .sheet{
+    background:var(--card); width:100%; border-radius:18px 18px 0 0;
+    padding:18px 18px calc(24px + env(safe-area-inset-bottom,0px));
+    max-height:85vh; overflow-y:auto;
+  }
+  .sheet h3{margin:0 0 12px; font-size:16px;}
+  /* 달력 */
+  .cal-head{display:flex; align-items:center; gap:6px; margin:4px 0 10px;}
+  .cal-head .title{font-size:18px; font-weight:700; flex:1;}
+  .dow{display:grid; grid-template-columns:repeat(7,1fr); margin-bottom:4px;}
+  .dow span{text-align:center; font-size:11px; font-weight:600; color:var(--sub); padding:2px 0;}
+  .dow span:first-child{color:var(--red);} .dow span:last-child{color:var(--blue);}
+  .grid{
+    display:grid; grid-template-columns:repeat(7,1fr); gap:1px;
+    background:var(--border); border:1px solid var(--border);
+    border-radius:14px; overflow:hidden;
+  }
+  .cell{background:var(--card); min-height:58px; padding:3px; font-size:11px;}
+  .cell.sel{background:var(--blue-soft);}
+  .cell .d{
+    display:inline-block; min-width:19px; text-align:center; border-radius:10px;
+    font-weight:600; line-height:18px;
+  }
+  .cell.today .d{background:var(--red); color:#fff;}
+  .ev{
+    font-size:9px; font-weight:500; border-radius:4px; padding:0 3px; margin-top:1px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .more{font-size:9px; color:var(--sub); padding-left:3px;}
+  .day-title{display:flex; align-items:center; margin:16px 0 8px;}
+  .day-title b{font-size:15px; flex:1;}
+  /* 체크 항목 */
+  .ck{display:flex; align-items:center; gap:8px; padding:4px 0; font-size:13px;}
+  .ck input[type=checkbox]{width:17px; height:17px; accent-color:var(--blue); padding:0;}
+  .done{color:var(--sub); text-decoration:line-through;}
+  /* 할 일 행 */
+  .todo{display:flex; align-items:center; gap:9px;}
+  .todo input[type=checkbox]{width:18px; height:18px; accent-color:var(--blue); flex-shrink:0; padding:0;}
+  .todo .t{flex:1; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .badge{font-size:10px; padding:2px 8px; border-radius:12px; background:rgba(0,0,0,.05); color:var(--sub); flex-shrink:0;}
+  .badge.over{background:var(--red); color:#fff;}
+  /* 메모 */
+  .memo-item .ttl{font-size:13px; font-weight:600; display:flex; gap:4px; align-items:center;}
+  .memo-item .pv{font-size:11px; color:var(--sub); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px;}
+  .editor{position:fixed; inset:0; background:var(--bg); z-index:30; display:none; flex-direction:column;}
+  .editor.open{display:flex;}
+  .editor header{padding-top:calc(env(safe-area-inset-top,0px) + 10px);}
+  .editor input.ttl{background:none; font-size:19px; font-weight:700; padding:4px 0; border-radius:0;}
+  .editor textarea{flex:1; resize:none; line-height:1.7; margin-top:8px; background:var(--card); border:1px solid var(--border);}
+  .editor .body{flex:1; display:flex; flex-direction:column; padding:0 16px calc(16px + env(safe-area-inset-bottom,0px));}
+  /* 검색 */
+  .sec{font-size:11px; font-weight:700; letter-spacing:.4px; color:var(--sub); margin:14px 2px 6px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="page-title">달력</h1>
+  <span id="sync-dot" class="dot" style="background:#C7C7CC" title="동기화 상태"></span>
+  <button class="icon-btn" onclick="openAccount()">👤</button>
+  <button class="icon-btn" onclick="openSearch()">🔍</button>
+</header>
+
+<main id="main"></main>
+
+<button class="fab" id="fab" onclick="onFab()">＋</button>
+
+<nav>
+  <button id="tab0" onclick="go(0)"><span class="ic">📅</span>달력</button>
+  <button id="tab1" onclick="go(1)"><span class="ic">☑️</span>To-do</button>
+  <button id="tab2" onclick="go(2)"><span class="ic">📝</span>메모</button>
+</nav>
+
+<!-- 바텀 시트 -->
+<div class="sheet-bg" id="sheet-bg" onclick="if(event.target===this)closeSheet()">
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<!-- 메모 에디터 -->
+<div class="editor" id="editor">
+  <header>
+    <button class="icon-btn" onclick="closeEditor()">‹</button>
+    <h1 style="font-size:16px">메모</h1>
+    <button class="icon-btn" id="pin-btn" onclick="togglePin()">📌</button>
+    <button class="icon-btn" onclick="deleteMemo()">🗑</button>
+  </header>
+  <div class="body">
+    <input class="ttl" id="ed-title" placeholder="제목" oninput="editMemo()">
+    <div class="sub" id="ed-updated"></div>
+    <textarea id="ed-body" placeholder="메모를 입력하세요…" oninput="editMemo()"></textarea>
+  </div>
+</div>
+
+<script>
+/* ================= 저장소 (localStorage, 실패 시 메모리) ================= */
+let mem = {};
+const store = {
+  get(k){ try{ return localStorage.getItem(k); }catch(e){ return mem[k] ?? null; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
+};
+const KEY = 'planner_web_v1';
+
+/* ================= 상태 ================= */
+const pad = n => String(n).padStart(2,'0');
+const keyOf = (y,m,d) => `${y}-${pad(m+1)}-${pad(d)}`;
+const todayKey = () => { const n=new Date(); return keyOf(n.getFullYear(),n.getMonth(),n.getDate()); };
+const nowStr = () => { const n=new Date(); return `${todayKey()} ${pad(n.getHours())}:${pad(n.getMinutes())}`; };
+let _id = Date.now()%1e6;
+const uid = () => String(++_id);
+
+const TYPES = { allday:['종일','var(--blue)'], timed:['시간','var(--purple)'], memo:['메모','var(--orange)'], checklist:['체크','var(--green)'] };
+const PRI = { high:['높음','var(--red)'], mid:['중간','var(--orange)'], low:['낮음','var(--green)'] };
+
+let S = load();
+function load(){
+  const raw = store.get(KEY);
+  if(raw){ try{ return JSON.parse(raw); }catch(e){} }
+  const t = todayKey();
+  return {
+    events:[
+      {id:uid(),date:t,type:'timed',title:'팀 주간 회의',start:'10:00',end:'11:00'},
+      {id:uid(),date:t,type:'memo',title:'저녁에 운동화 주문'},
+      {id:uid(),date:t,type:'checklist',title:'출장 준비',items:[{id:uid(),text:'노트북 충전기',done:true},{id:uid(),text:'발표 자료 인쇄',done:false}]},
+    ],
+    todoFolders:[{id:'tf1',name:'앱 개발'},{id:'tf2',name:'개인'}],
+    todos:[
+      {id:uid(),folderId:'tf1',title:'와이어프레임 검토',done:true,due:'',priority:'high',created:1},
+      {id:uid(),folderId:'tf1',title:'DB 스키마 설계',done:false,due:t,priority:'high',created:2},
+      {id:uid(),folderId:'tf2',title:'운동 등록',done:false,due:'',priority:'mid',created:3},
+    ],
+    memoFolders:[{id:'mf1',name:'앱 개발'},{id:'mf2',name:'아이디어'}],
+    memos:[
+      {id:'m1',folderId:'mf1',title:'동기화 정책',body:'오프라인 우선 저장 → 온라인 시 병합.\n충돌 시 최신 수정본 우선.',pinned:true,updated:nowStr()},
+    ],
+  };
+}
+function save(){
+  S.updatedAt = Date.now();
+  store.set(KEY, JSON.stringify(S));
+  if(window.pushSync) window.pushSync();   // 로그인 상태면 클라우드로 전송
+}
+function commit(){ save(); render(); }
+/* 동기화 모듈에서 사용 */
+window.getState = () => S;
+window.replaceState = (s) => { S = s; store.set(KEY, JSON.stringify(S)); render(); };
+
+/* UI 상태 */
+let tab = 0;
+let calY, calM;
+{ const n=new Date(); calY=n.getFullYear(); calM=n.getMonth(); }
+let selDate = todayKey();
+let todoFolder = 'ALL', todoFilter = 'all', todoSort = 'created';
+let memoFolder = 'mf1', curMemoId = null;
+let searchMode = false, searchQ = '';
+
+/* ================= 네비게이션 ================= */
+function go(i){ tab=i; searchMode=false; render(); }
+function onFab(){
+  if(searchMode) return;
+  if(tab===0) openAddEvent();
+  else if(tab===1) openAddTodo();
+  else addMemo();
+}
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+/* ================= 렌더 ================= */
+function render(){
+  document.querySelectorAll('nav button').forEach((b,i)=>b.classList.toggle('on', i===tab && !searchMode));
+  const title = searchMode ? '검색' : ['달력','To-do','메모'][tab];
+  document.getElementById('page-title').textContent = title;
+  document.getElementById('fab').style.display = searchMode ? 'none' : 'flex';
+  const m = document.getElementById('main');
+  if(searchMode){ m.innerHTML = renderSearch(); const si=document.getElementById('search-in'); if(si){ si.focus(); si.setSelectionRange(searchQ.length,searchQ.length);} return; }
+  m.innerHTML = tab===0 ? renderCalendar() : tab===1 ? renderTodo() : renderMemo();
+}
+
+/* ---------- 달력 ---------- */
+function renderCalendar(){
+  const first = new Date(calY, calM, 1);
+  const startDow = first.getDay();
+  const dim = new Date(calY, calM+1, 0).getDate();
+  const cells = [];
+  for(let i=0;i<startDow;i++) cells.push(null);
+  for(let d=1;d<=dim;d++) cells.push(d);
+  while(cells.length%7) cells.push(null);
+  const tk = todayKey();
+
+  let grid = '';
+  cells.forEach(d=>{
+    if(d===null){ grid += `<div class="cell"></div>`; return; }
+    const k = keyOf(calY, calM, d);
+    const evs = S.events.filter(e=>e.date===k);
+    const cls = `cell${k===tk?' today':''}${k===selDate?' sel':''}`;
+    let chips = evs.slice(0,2).map(e=>{
+      const c = TYPES[e.type][1];
+      const label = (e.type==='timed'? e.start+' ':'') + e.title;
+      return `<div class="ev" style="color:${c};background:color-mix(in srgb,${c} 12%,transparent)">${esc(label)}</div>`;
+    }).join('');
+    if(evs.length>2) chips += `<div class="more">+${evs.length-2}</div>`;
+    grid += `<div class="${cls}" onclick="selDate='${k}';render()"><span class="d">${d}</span>${chips}</div>`;
+  });
+
+  const dayEvs = S.events.filter(e=>e.date===selDate);
+  let detail = dayEvs.length ? '' : `<div class="empty">일정이 없습니다.<br>＋ 버튼으로 추가하세요.</div>`;
+  dayEvs.forEach(e=>{
+    const [label,c] = TYPES[e.type];
+    let extra = '';
+    if(e.type==='checklist'){
+      extra = (e.items||[]).map(it=>`
+        <label class="ck" onclick="event.stopPropagation()">
+          <input type="checkbox" ${it.done?'checked':''} onchange="toggleCk('${e.id}','${it.id}')">
+          <span class="${it.done?'done':''}">${esc(it.text)}</span>
+        </label>`).join('')
+        + `<input style="margin-top:6px;font-size:12px;padding:8px 10px" placeholder="항목 추가"
+             onkeydown="if(event.key==='Enter'&&this.value.trim()){addCk('${e.id}',this.value.trim());}">`;
+    }
+    detail += `<div class="card">
+      <div class="row">
+        <span class="dot" style="background:${c}"></span>
+        <b style="font-size:13px;flex:1">${esc(e.title)}</b>
+        <button class="x" onclick="delEvent('${e.id}')">✕</button>
+      </div>
+      <div class="sub" style="margin-left:16px">${label}${e.type==='timed'?` · ${e.start} – ${e.end}`:''}</div>
+      ${extra}</div>`;
+  });
+
+  return `
+    <div class="cal-head">
+      <span class="title">${calY}년 ${calM+1}월</span>
+      <button class="icon-btn" onclick="moveMonth(-1)">‹</button>
+      <button class="icon-btn" style="width:auto;padding:0 12px;font-size:12px" onclick="goToday()">오늘</button>
+      <button class="icon-btn" onclick="moveMonth(1)">›</button>
+    </div>
+    <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+    <div class="grid">${grid}</div>
+    <div class="day-title"><b>${selDate.replaceAll('-','. ')}</b><span class="sub">일정 ${dayEvs.length}개</span></div>
+    ${detail}`;
+}
+function moveMonth(d){ calM+=d; if(calM<0){calM=11;calY--;} if(calM>11){calM=0;calY++;} render(); }
+function goToday(){ const n=new Date(); calY=n.getFullYear(); calM=n.getMonth(); selDate=todayKey(); render(); }
+function delEvent(id){ S.events=S.events.filter(e=>e.id!==id); commit(); }
+function toggleCk(eid,iid){ const e=S.events.find(e=>e.id===eid); const it=e.items.find(i=>i.id===iid); it.done=!it.done; commit(); }
+function addCk(eid,text){ S.events.find(e=>e.id===eid).items.push({id:uid(),text,done:false}); commit(); }
+
+function openAddEvent(){
+  let type='allday';
+  const html = () => `
+    <h3>${selDate.replaceAll('-','. ')} 일정 추가</h3>
+    <div class="chips">${Object.entries(TYPES).map(([k,[l]])=>
+      `<button class="chip ${type===k?'on':''}" onclick="window._setType('${k}')">${l}</button>`).join('')}</div>
+    <input id="ae-title" placeholder="제목" style="margin-bottom:10px">
+    <div class="row" id="ae-times" style="display:${type==='timed'?'flex':'none'};margin-bottom:10px">
+      <input type="time" id="ae-start" value="09:00">
+      <input type="time" id="ae-end" value="10:00">
+    </div>
+    <button class="btn" onclick="window._submitEvent()">추가</button>`;
+  window._setType = t => { type=t; const ti=document.getElementById('ae-title').value; openSheetHTML(html()); document.getElementById('ae-title').value=ti; };
+  window._submitEvent = () => {
+    const title = document.getElementById('ae-title').value.trim();
+    if(!title) return;
+    const ev = {id:uid(),date:selDate,type,title};
+    if(type==='timed'){ ev.start=document.getElementById('ae-start').value; ev.end=document.getElementById('ae-end').value; }
+    if(type==='checklist') ev.items=[];
+    S.events.push(ev); closeSheet(); commit();
+  };
+  openSheetHTML(html());
+  document.getElementById('ae-title').focus();
+}
+
+/* ---------- To-do ---------- */
+function renderTodo(){
+  const folders = S.todoFolders;
+  const chips = `<div class="chips">
+    <button class="chip ${todoFolder==='ALL'?'on':''}" onclick="todoFolder='ALL';render()">전체</button>
+    ${folders.map(f=>`<button class="chip ${todoFolder===f.id?'on':''}" onclick="todoFolder='${f.id}';render()">${esc(f.name)}</button>`).join('')}
+    <button class="chip" onclick="promptTodoFolder()">＋ 폴더</button>
+  </div>`;
+  const filters = `<div class="chips">
+    ${[['all','전체'],['open','미완료'],['done','완료']].map(([k,l])=>
+      `<button class="chip ${todoFilter===k?'on':''}" onclick="todoFilter='${k}';render()">${l}</button>`).join('')}
+    <select style="width:auto;font-size:12px;padding:6px 10px;margin-left:auto" onchange="todoSort=this.value;render()">
+      ${[['created','생성순'],['due','마감일순'],['priority','우선순위순']].map(([k,l])=>
+        `<option value="${k}" ${todoSort===k?'selected':''}>${l}</option>`).join('')}
+    </select>
+  </div>`;
+
+  let list = S.todos.filter(t=> todoFolder==='ALL'||t.folderId===todoFolder)
+    .filter(t=> todoFilter==='all'?true: todoFilter==='open'? !t.done : t.done);
+  if(todoSort==='due') list=[...list].sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
+  else if(todoSort==='priority'){ const r={high:0,mid:1,low:2}; list=[...list].sort((a,b)=>r[a.priority]-r[b.priority]); }
+  else list=[...list].sort((a,b)=>a.created-b.created);
+
+  const tk = todayKey();
+  const rows = list.map(t=>{
+    const over = t.due && !t.done && t.due < tk;
+    const folder = todoFolder==='ALL' ? `<span class="sub">${esc(folders.find(f=>f.id===t.folderId)?.name||'')}</span>` : '';
+    return `<div class="card todo">
+      <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
+      <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
+      <span class="t ${t.done?'done':''}">${esc(t.title)}</span>
+      ${folder}
+      ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
+      <button class="x" onclick="delTodo('${t.id}')">✕</button>
+    </div>`;
+  }).join('');
+
+  return chips + filters + (rows || `<div class="empty">표시할 할 일이 없습니다.</div>`);
+}
+function toggleTodo(id){ const t=S.todos.find(t=>t.id===id); t.done=!t.done; commit(); }
+function delTodo(id){ S.todos=S.todos.filter(t=>t.id!==id); commit(); }
+function promptTodoFolder(){
+  const name = prompt('새 폴더 이름');
+  if(name && name.trim()){ const f={id:uid(),name:name.trim()}; S.todoFolders.push(f); todoFolder=f.id; commit(); }
+}
+function openAddTodo(){
+  let pri='mid', fid = todoFolder!=='ALL'? todoFolder : (S.todoFolders[0]?.id||null);
+  const html = () => `
+    <h3>새 할 일</h3>
+    <input id="at-title" placeholder="할 일 제목" style="margin-bottom:10px">
+    <div class="chips">${S.todoFolders.map(f=>
+      `<button class="chip ${fid===f.id?'on':''}" onclick="window._setFid('${f.id}')">${esc(f.name)}</button>`).join('')}</div>
+    <div class="chips">
+      <input type="date" id="at-due" style="width:auto;font-size:12px;padding:7px 10px">
+      ${Object.entries(PRI).map(([k,[l]])=>
+        `<button class="chip ${pri===k?'on':''}" onclick="window._setPri('${k}')">${l}</button>`).join('')}
+    </div>
+    <button class="btn" onclick="window._submitTodo()">추가</button>`;
+  const keep = fn => { const t=document.getElementById('at-title').value, d=document.getElementById('at-due').value;
+    fn(); openSheetHTML(html()); document.getElementById('at-title').value=t; document.getElementById('at-due').value=d; };
+  window._setFid = id => keep(()=>fid=id);
+  window._setPri = p => keep(()=>pri=p);
+  window._submitTodo = () => {
+    const title = document.getElementById('at-title').value.trim();
+    if(!title || !fid) return;
+    S.todos.push({id:uid(),folderId:fid,title,done:false,due:document.getElementById('at-due').value||'',priority:pri,created:Date.now()});
+    closeSheet(); commit();
+  };
+  openSheetHTML(html());
+  document.getElementById('at-title').focus();
+}
+
+/* ---------- 메모 ---------- */
+function renderMemo(){
+  const chips = `<div class="chips">
+    ${S.memoFolders.map(f=>`<button class="chip ${memoFolder===f.id?'on':''}" onclick="memoFolder='${f.id}';render()">${esc(f.name)}</button>`).join('')}
+    <button class="chip" onclick="promptMemoFolder()">＋ 폴더</button>
+  </div>`;
+  const list = S.memos.filter(m=>m.folderId===memoFolder)
+    .sort((a,b)=> (b.pinned?1:0)-(a.pinned?1:0) || b.updated.localeCompare(a.updated));
+  const rows = list.map(m=>`
+    <div class="card memo-item" onclick="openEditor('${m.id}')">
+      <div class="ttl">${m.pinned?'📌 ':''}${esc(m.title||'제목 없음')}</div>
+      <div class="pv">${m.updated.slice(5,16)} · ${esc((m.body||'').split('\n')[0]||'내용 없음')}</div>
+    </div>`).join('');
+  return chips + (rows || `<div class="empty">메모가 없습니다.<br>＋ 버튼으로 새로 만드세요.</div>`);
+}
+function promptMemoFolder(){
+  const name = prompt('새 폴더 이름');
+  if(name && name.trim()){ const f={id:uid(),name:name.trim()}; S.memoFolders.push(f); memoFolder=f.id; commit(); }
+}
+function addMemo(){
+  const m = {id:uid(),folderId:memoFolder,title:'',body:'',pinned:false,updated:nowStr()};
+  S.memos.unshift(m); save();
+  openEditor(m.id);
+}
+function openEditor(id){
+  curMemoId = id;
+  const m = S.memos.find(m=>m.id===id);
+  document.getElementById('ed-title').value = m.title;
+  document.getElementById('ed-body').value = m.body;
+  document.getElementById('ed-updated').textContent = '수정: '+m.updated;
+  document.getElementById('pin-btn').style.opacity = m.pinned? '1':'0.4';
+  document.getElementById('editor').classList.add('open');
+}
+function closeEditor(){ document.getElementById('editor').classList.remove('open'); render(); }
+function editMemo(){
+  const m = S.memos.find(m=>m.id===curMemoId); if(!m) return;
+  m.title = document.getElementById('ed-title').value;
+  m.body = document.getElementById('ed-body').value;
+  m.updated = nowStr();
+  document.getElementById('ed-updated').textContent = '수정: '+m.updated;
+  save();
+}
+function togglePin(){
+  const m = S.memos.find(m=>m.id===curMemoId); if(!m) return;
+  m.pinned = !m.pinned; m.updated = nowStr(); save();
+  document.getElementById('pin-btn').style.opacity = m.pinned? '1':'0.4';
+}
+function deleteMemo(){
+  if(!confirm('이 메모를 삭제할까요?')) return;
+  S.memos = S.memos.filter(m=>m.id!==curMemoId);
+  curMemoId = null; save(); closeEditor();
+}
+
+/* ---------- 검색 ---------- */
+function openSearch(){ searchMode=true; searchQ=''; render(); }
+function renderSearch(){
+  const q = searchQ.toLowerCase();
+  let out = `<input id="search-in" placeholder="일정 · 할 일 · 메모 검색" value="${esc(searchQ)}"
+      oninput="searchQ=this.value;refreshSearch()" style="margin:6px 0 4px">
+    <div id="search-out">`;
+  out += searchResultsHTML(q) + `</div>`;
+  return out;
+}
+function refreshSearch(){
+  document.getElementById('search-out').innerHTML = searchResultsHTML(searchQ.toLowerCase());
+}
+function searchResultsHTML(q){
+  if(!q.trim()) return `<div class="empty" style="margin-top:10px">검색어를 입력하세요.</div>`;
+  const ev = S.events.filter(e=>e.title.toLowerCase().includes(q));
+  const td = S.todos.filter(t=>t.title.toLowerCase().includes(q));
+  const mm = S.memos.filter(m=>(m.title+'\n'+m.body).toLowerCase().includes(q));
+  const total = ev.length+td.length+mm.length;
+  if(!total) return `<div class="empty" style="margin-top:10px">결과가 없습니다.</div>`;
+  let h = `<div class="sub" style="margin:6px 2px">${total}개 항목</div>`;
+  if(ev.length) h += `<div class="sec">일정</div>` + ev.map(e=>`
+    <div class="card row" onclick="jumpDate('${e.date}')">
+      <span class="dot" style="background:${TYPES[e.type][1]}"></span>
+      <span style="flex:1;font-size:13px">${esc(e.title)}</span><span class="sub">${e.date}</span>
+    </div>`).join('');
+  if(td.length) h += `<div class="sec">할 일</div>` + td.map(t=>`
+    <div class="card row" onclick="jumpTodo('${t.folderId}')">
+      <span class="dot" style="background:${PRI[t.priority][1]}"></span>
+      <span style="flex:1;font-size:13px">${esc(t.title)}</span>
+      <span class="sub">${esc(S.todoFolders.find(f=>f.id===t.folderId)?.name||'')}</span>
+    </div>`).join('');
+  if(mm.length) h += `<div class="sec">메모</div>` + mm.map(m=>`
+    <div class="card" onclick="jumpMemo('${m.folderId}','${m.id}')">
+      <div style="font-size:13px;font-weight:600">${esc(m.title||'제목 없음')}</div>
+      <div class="pv sub">${esc((m.body||'').split('\n')[0])}</div>
+    </div>`).join('');
+  return h;
+}
+function jumpDate(d){ searchMode=false; tab=0; selDate=d; const [y,m]=d.split('-'); calY=+y; calM=+m-1; render(); }
+function jumpTodo(fid){ searchMode=false; tab=1; todoFolder=fid; render(); }
+function jumpMemo(fid,id){ searchMode=false; tab=2; memoFolder=fid; render(); openEditor(id); }
+
+/* ---------- 계정 / 동기화 ---------- */
+function openAccount(){
+  const fb = window.FB || {};
+  let inner;
+  if(!fb.ready){
+    inner = `
+      <p style="font-size:13px;line-height:1.7;margin:0 0 6px">
+        아직 Firebase 설정이 비어 있어 <b>로컬 저장 모드</b>로 동작 중입니다.<br>
+        파일 상단의 <code>FIREBASE_CONFIG</code>에 본인 프로젝트 설정을 붙여넣으면
+        구글 로그인과 기기 간 동기화가 활성화됩니다.
+      </p>
+      <p class="sub" style="line-height:1.7">데이터는 이 기기 브라우저에 계속 저장됩니다.</p>`;
+  } else if(!fb.user){
+    inner = `
+      <p style="font-size:13px;margin:0 0 12px">구글 계정으로 로그인하면 모든 기기에서<br>일정·할 일·메모가 자동으로 동기화됩니다.</p>
+      <button class="btn" onclick="FB.login()">Google로 로그인</button>
+      <p class="sub" style="margin-top:10px">본인 Firebase 프로젝트(무료)에만 저장되며 외부로 전송되지 않습니다.</p>`;
+  } else {
+    inner = `
+      <p style="font-size:13px;margin:0 0 4px"><b>${esc(fb.user.email||'')}</b></p>
+      <p class="sub" style="margin:0 0 12px">마지막 동기화: <span id="acc-last">${fb.lastSync||'-'}</span></p>
+      <button class="btn" style="background:rgba(0,0,0,.07);color:var(--text)" onclick="FB.logout()">로그아웃</button>`;
+  }
+  openSheetHTML(`<h3>계정 · 동기화</h3>${inner}`);
+}
+function setSyncDot(color){ const d=document.getElementById('sync-dot'); if(d) d.style.background=color; }
+
+/* ---------- 시트 ---------- */
+function openSheetHTML(html){
+  document.getElementById('sheet').innerHTML = html;
+  document.getElementById('sheet-bg').classList.add('open');
+}
+function closeSheet(){ document.getElementById('sheet-bg').classList.remove('open'); }
+
+render();
+</script>
+
+<!-- ================= Firebase 동기화 =================
+  사용 방법 (전부 무료 · Spark 플랜):
+  1) https://console.firebase.google.com 에서 프로젝트 생성
+  2) [빌드 → Authentication → 시작하기 → Google] 사용 설정
+  3) [빌드 → Firestore Database → 데이터베이스 만들기] (프로덕션 모드)
+     → [규칙] 탭에 아래 붙여넣고 게시:
+        rules_version = '2';
+        service cloud.firestore {
+          match /databases/{database}/documents {
+            match /users/{uid}/{doc=**} {
+              allow read, write: if request.auth != null && request.auth.uid == uid;
+            }
+          }
+        }
+  4) [프로젝트 설정 → 일반 → 내 앱 → 웹 앱 추가] 후 표시되는
+     firebaseConfig 값을 아래 FIREBASE_CONFIG에 붙여넣기
+  5) 이 파일을 호스팅에 올려 https 주소로 접속
+     (Firebase Hosting 또는 Netlify Drop — 구글 로그인은 file:// 에서는 동작하지 않음.
+      Netlify 등 외부 도메인 사용 시 [Authentication → 설정 → 승인된 도메인]에 추가)
+==================================================== -->
+<script type="module">
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDmhEyE-C-LdAHFIDs8ok6OJUXMbXWo-AE",
+  authDomain: "dolist-c082a.firebaseapp.com",
+  projectId: "dolist-c082a",
+  storageBucket: "dolist-c082a.firebasestorage.app",
+  messagingSenderId: "70875500148",
+  appId: "1:70875500148:web:52b13345bf6d8b0abf4b21"
+};
+
+window.FB = { ready:false, user:null, lastSync:null };
+if (FIREBASE_CONFIG.apiKey) {
+  try {
+    const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js");
+    const { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } =
+      await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js");
+    const { getFirestore, doc, getDoc, setDoc, onSnapshot } =
+      await import("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js");
+
+    const app = initializeApp(FIREBASE_CONFIG);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const CLIENT = Math.random().toString(36).slice(2); // 자기 쓰기 이벤트 무시용
+    let unsub = null, pushTimer = null;
+
+    FB.ready = true;
+
+    const stamp = () => {
+      const n = new Date();
+      FB.lastSync = `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`;
+      const el = document.getElementById('acc-last');
+      if (el) el.textContent = FB.lastSync;
+    };
+
+    const userDoc = () => doc(db, 'users', FB.user.uid, 'data', 'main');
+
+    // 저장될 때마다 호출됨 (1초 디바운스 후 업로드)
+    window.pushSync = () => {
+      if (!FB.user) return;
+      clearTimeout(pushTimer);
+      pushTimer = setTimeout(async () => {
+        try {
+          setSyncDot('var(--orange)');
+          const s = window.getState();
+          await setDoc(userDoc(), { json: JSON.stringify(s), updatedAt: s.updatedAt, writer: CLIENT });
+          stamp(); setSyncDot('var(--green)');
+        } catch (e) { console.error('sync push', e); setSyncDot('var(--red)'); }
+      }, 1000);
+    };
+
+    async function startSync() {
+      setSyncDot('var(--orange)');
+      try {
+        // 최초 병합: 더 최신 쪽을 채택
+        const snap = await getDoc(userDoc());
+        const local = window.getState();
+        if (snap.exists()) {
+          const remote = snap.data();
+          if ((remote.updatedAt || 0) > (local.updatedAt || 0)) {
+            window.replaceState(JSON.parse(remote.json));
+          } else {
+            await setDoc(userDoc(), { json: JSON.stringify(local), updatedAt: local.updatedAt || Date.now(), writer: CLIENT });
+          }
+        } else {
+          await setDoc(userDoc(), { json: JSON.stringify(local), updatedAt: local.updatedAt || Date.now(), writer: CLIENT });
+        }
+        stamp(); setSyncDot('var(--green)');
+        // 실시간 수신: 다른 기기의 변경 반영
+        unsub = onSnapshot(userDoc(), s => {
+          if (!s.exists()) return;
+          const d = s.data();
+          if (d.writer === CLIENT) return; // 내가 쓴 것
+          if ((d.updatedAt || 0) > (window.getState().updatedAt || 0)) {
+            window.replaceState(JSON.parse(d.json));
+            stamp();
+          }
+        });
+      } catch (e) { console.error('sync start', e); setSyncDot('var(--red)'); }
+    }
+
+    onAuthStateChanged(auth, u => {
+      FB.user = u;
+      if (u) startSync();
+      else { if (unsub) unsub(); unsub = null; setSyncDot('#C7C7CC'); }
+    });
+
+    FB.login = async () => {
+      try { await signInWithPopup(auth, new GoogleAuthProvider()); closeSheet(); }
+      catch (e) { alert('로그인 실패: ' + e.message); }
+    };
+    FB.logout = async () => { await signOut(auth); closeSheet(); };
+  } catch (e) {
+    console.error('firebase init', e);
+  }
+}
+</script>
+</body>
+</html>

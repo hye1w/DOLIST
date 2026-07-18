@@ -478,13 +478,43 @@ function onFab(){
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+/* ---------- 입력창 자동완성·자동입력 차단 ---------- */
+function hardenInputs(){
+  try{
+    document.querySelectorAll('input, textarea').forEach(el=>{
+      el.setAttribute('autocomplete','off');
+      el.setAttribute('autocorrect','off');
+      el.setAttribute('autocapitalize','off');
+      el.setAttribute('spellcheck','false');
+    });
+  }catch(_){}
+}
+
 /* ================= 커스텀 다이얼로그 ================= */
 let _mCb = null;
+/* 오버레이-히스토리 연동: 뒤로가기 시 앱 종료 대신 열린 화면 닫기 */
+let _ovModal=false, _ovSheet=false, _ovEditor=false, _popSuppress=0;
+function _pushOv(){ try{ if(window.history && history.pushState) history.pushState({ov:1}, ''); }catch(_){} }
+function _consumeOv(){ try{ if(window.history && history.back){ _popSuppress++; history.back(); } }catch(_){} }
+if(window.addEventListener) window.addEventListener('popstate', ()=>{
+  if(_popSuppress > 0){ _popSuppress--; return; }
+  if(_ovModal){ _ovModal=false; _closeModalNow(); return; }
+  if(_ovSheet){ _ovSheet=false; _closeSheetNow(); return; }
+  if(_ovEditor){ _ovEditor=false; _closeEditorNow(); }
+});
+
 function _modal(html){
+  const bg = document.getElementById('modal-bg');
+  if(!bg.classList.contains('open')){ _ovModal=true; _pushOv(); }
   document.getElementById('modal').innerHTML = html;
-  document.getElementById('modal-bg').classList.add('open');
+  bg.classList.add('open');
+  hardenInputs();
 }
-function closeModal(){ document.getElementById('modal-bg').classList.remove('open'); _mCb=null; }
+function _closeModalNow(){ document.getElementById('modal-bg').classList.remove('open'); _mCb=null; }
+function closeModal(){
+  _closeModalNow();
+  if(_ovModal){ _ovModal=false; _consumeOv(); }
+}
 function _mYes(){ const cb=_mCb; closeModal(); if(cb) cb(); }
 function _mSubmit(){
   const v = document.getElementById('modal-in') ? document.getElementById('modal-in').value : '';
@@ -614,6 +644,7 @@ function render(){
   const m = document.getElementById('main');
   if(searchMode){ m.innerHTML = renderSearch(); const si=document.getElementById('search-in'); if(si){ si.focus(); si.setSelectionRange(searchQ.length,searchQ.length);} return; }
   m.innerHTML = tab===0 ? renderCalendar() : tab===1 ? renderTodo() : renderMemo();
+  hardenInputs();
 }
 
 /* ---------- 달력 ---------- */
@@ -1324,8 +1355,11 @@ function openEditor(id){
   document.getElementById('ed-body').value = m.body;
   document.getElementById('ed-updated').textContent = '수정: '+m.updated;
   document.getElementById('pin-btn').style.opacity = m.pinned? '1':'0.4';
-  document.getElementById('editor').classList.add('open');
+  const ed = document.getElementById('editor');
+  if(!ed.classList.contains('open')){ _ovEditor=true; _pushOv(); }
+  ed.classList.add('open');
   renderEditorNotes();
+  hardenInputs();
 }
 function renderEditorNotes(){
   const m = S.memos.find(m=>m.id===curMemoId);
@@ -1333,7 +1367,11 @@ function renderEditorNotes(){
   if(!m || !box){ if(box) box.innerHTML=''; return; }
   box.innerHTML = notesHTML('mm', m);
 }
-function closeEditor(){ document.getElementById('editor').classList.remove('open'); render(); }
+function _closeEditorNow(){ document.getElementById('editor').classList.remove('open'); render(); }
+function closeEditor(){
+  _closeEditorNow();
+  if(_ovEditor){ _ovEditor=false; _consumeOv(); }
+}
 function editMemo(){
   const m = S.memos.find(m=>m.id===curMemoId); if(!m) return;
   m.title = document.getElementById('ed-title').value;
@@ -1440,10 +1478,17 @@ function setSyncDot(color){ const d=document.getElementById('sync-dot'); if(d) d
 
 /* ---------- 시트 ---------- */
 function openSheetHTML(html){
+  const bg = document.getElementById('sheet-bg');
+  if(!bg.classList.contains('open')){ _ovSheet=true; _pushOv(); }
   document.getElementById('sheet').innerHTML = html;
-  document.getElementById('sheet-bg').classList.add('open');
+  bg.classList.add('open');
+  hardenInputs();
 }
-function closeSheet(){ document.getElementById('sheet-bg').classList.remove('open'); }
+function _closeSheetNow(){ document.getElementById('sheet-bg').classList.remove('open'); }
+function closeSheet(){
+  _closeSheetNow();
+  if(_ovSheet){ _ovSheet=false; _consumeOv(); }
+}
 
 render();
 

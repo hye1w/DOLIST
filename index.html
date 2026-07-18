@@ -160,6 +160,12 @@
   .note-add{font-size:11px; padding:4px 10px;}
   .note-in{font-size:12px; padding:7px 10px; margin-top:4px;}
   .chip .fdot{display:inline-block; width:8px; height:8px; border-radius:8px; margin-right:5px; vertical-align:middle;}
+  .man{font-size:12.5px; line-height:1.75; color:var(--text); margin:2px 0 6px;}
+  /* 공유 댓글 */
+  .cmts{margin:8px 0 6px; padding-left:8px; border-left:2px solid var(--border); display:flex; flex-direction:column; gap:6px;}
+  .cmt-h{display:flex; gap:6px; align-items:baseline; font-size:11px;}
+  .cmt-h b{color:var(--text); font-size:12px;}
+  .cmt-b{font-size:12.5px; color:var(--text); white-space:pre-wrap; word-break:break-word; line-height:1.5;}
   /* 색상 선택 */
   .swatches{display:flex; gap:8px; flex-wrap:wrap; padding:2px 0 12px;}
   .sw{width:26px; height:26px; border-radius:50%; border:2px solid transparent; padding:0;}
@@ -219,7 +225,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v5.1';
+const APP_VERSION = 'v6.1';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -249,6 +255,7 @@ applyTheme();
 
 let S = load();
 S.trash = S.trash || [];
+S.contacts = S.contacts || [];  // 공유용 연락처 {id, nick, email}
 
 /* ---------- 휴지통 (15일 보관 후 자동 삭제) ---------- */
 const TRASH_DAYS = 15;
@@ -265,7 +272,7 @@ function toTrash(kind, item){
 }
 function openTrash(){
   purgeTrash();
-  const icons = {ev:'📅', td:'☑️', mm:'📝'};
+  const icons = {ev:'📅', td:'☑️', mm:'📝', nt:'↳'};
   const rows = S.trash.map(t=>{
     const dleft = Math.max(0, TRASH_DAYS - Math.floor((Date.now()-t.deletedAt)/864e5));
     return `<div class="card row">
@@ -284,15 +291,24 @@ function openTrash(){
 function restoreTrash(id){
   const i = S.trash.findIndex(t=>t.id===id); if(i<0) return;
   const {kind, item} = S.trash[i];
-  const ensureFolder = (folders) => {
-    if(folders.find(f=>f.id===item.folderId)) return;
+  const ensureFolderFor = (obj, folders) => {
+    if(folders.find(f=>f.id===obj.folderId)) return;
     let rf = folders.find(f=>f.name==='복원됨');
     if(!rf){ rf = {id:uid(), name:'복원됨'}; folders.push(rf); }
-    item.folderId = rf.id;
+    obj.folderId = rf.id;
   };
+  const ensureFolder = (folders) => ensureFolderFor(item, folders);
   if(kind==='ev') S.events.push(item);
   else if(kind==='td'){ ensureFolder(S.todoFolders); S.todos.push(item); }
   else if(kind==='mm'){ ensureFolder(S.memoFolders); S.memos.unshift(item); if(!memoFolder) memoFolder=item.folderId; }
+  else if(kind==='nt'){
+    const p = findParent(item.pKind, item.pId);
+    if(p){ (p.notes = p.notes||[]).push(item.note); }
+    else { // 부모가 삭제된 경우 → 메모로 복원
+      const m = {id:uid(), folderId:'', title:item.note.text, body:'(하위 메모에서 복원됨)', pinned:false, updated:nowStr()};
+      ensureFolderFor(m, S.memoFolders); S.memos.unshift(m);
+    }
+  }
   S.trash.splice(i,1);
   commit(); openTrash();
 }
@@ -483,15 +499,17 @@ function sharedCardHTML(e){
   const c = evColor(e);
   const isOwner = window.FB && FB.user && e.owner === FB.user.uid;
   const others = (e.members||[]).filter(m=>m!==e.ownerEmail);
+  const nickOf = em => S.contacts.find(x=>x.email===em)?.nick || (em||'').split('@')[0];
   const comments = (e.comments||[]).map(cm=>`
-    <div class="note"><span><b style="color:var(--text)">${esc((cm.email||'').split('@')[0])}</b> ${esc(cm.text)}
-      <span style="opacity:.6">· ${esc((cm.at||'').slice(5,16))}</span></span></div>`).join('');
+    <div class="cmt">
+      <div class="cmt-h"><b>${esc(nickOf(cm.email))}</b><span class="sub">${esc((cm.at||'').slice(5,16))}</span></div>
+      <div class="cmt-b">${esc(cm.text)}</div>
+    </div>`).join('');
   const memberMgmt = isOwner ? `
-    <div class="notes" style="margin-top:8px">
-      ${others.map(m=>`<div class="note"><span>${esc(m)}</span>
-        <button class="x" onclick="shDelMember('${e.id}','${encodeURIComponent(m)}')">✕</button></div>`).join('')}
-      <input class="note-in" id="am-${e.id}" placeholder="이메일로 멤버 추가 후 엔터"
-        onkeydown="if(event.key==='Enter')shAddMember('${e.id}')">
+    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:5px">
+      ${others.map(m=>`<span class="badge">${esc(nickOf(m))}
+        <button class="x" style="font-size:9px" onclick="shDelMember('${e.id}','${encodeURIComponent(m)}')">✕</button></span>`).join('')}
+      <button class="chip note-add" onclick="openAddMember('${e.id}')">＋ 멤버</button>
     </div>` : '';
   return `<div class="card" style="border-left:3px solid ${c}">
     <div class="row">
@@ -500,33 +518,148 @@ function sharedCardHTML(e){
       ${isOwner?`<button class="x" onclick="shDelete('${e.id}')">✕</button>`:''}
     </div>
     <div class="sub" style="margin-left:16px">
-      공유 · ${esc((e.ownerEmail||'').split('@')[0])}님${e.type==='timed'?` · ${e.start} – ${e.end}`:''}
+      공유 · ${esc(nickOf(e.ownerEmail))}님${e.type==='timed'?` · ${e.start} – ${e.end}`:''}
       · 참여 ${(e.members||[]).length}명</div>
-    <div class="notes" style="margin-top:8px;display:flex">
-      ${comments || '<div class="note"><span style="opacity:.6">아직 댓글이 없습니다.</span></div>'}
-      <input class="note-in" id="cm-${e.id}" placeholder="댓글 입력 후 엔터"
-        onkeydown="if(event.key==='Enter')shComment('${e.id}')">
-    </div>
+    <div class="cmts">${comments || '<div class="sub" style="padding:4px 0">아직 댓글이 없습니다.</div>'}</div>
+    <input class="note-in" id="cm-${e.id}" placeholder="댓글 입력 후 엔터"
+      onkeydown="if(event.key==='Enter')shComment('${e.id}')">
     ${memberMgmt}</div>`;
+}
+function openAddMember(shareId){
+  const ev = sharedEvents.find(x=>x.id===shareId); if(!ev) return;
+  shSel = new Set();
+  window._amSheet = () => {
+    const typed = document.getElementById('am-email')?.value || '';
+    openSheetHTML(`<h3>멤버 추가</h3>
+      ${contactChipsHTML(ev.members||[])}
+      <input id="am-email" placeholder="직접 입력: friend@gmail.com" style="margin-bottom:10px">
+      <button class="btn" onclick="submitAddMember('${shareId}')">추가 ${shSel.size?`(${shSel.size}명)`:''}</button>`);
+    document.getElementById('am-email').value = typed;
+  };
+  // 연락처 칩 토글이 이 시트를 다시 그리도록 연결
+  const orig = window._shSheet; window._shSheet = window._amSheet;
+  window._amSheet();
+}
+function submitAddMember(shareId){
+  const raw = document.getElementById('am-email').value;
+  const typed = raw.split(',').map(s=>s.trim().toLowerCase()).filter(s=>s.includes('@'));
+  const emails = [...new Set([...shSel, ...typed])];
+  if(!emails.length){ alert('연락처를 선택하거나 이메일을 입력해주세요.'); return; }
+  Promise.all(emails.map(em=>FB.shareAddMember(shareId, em)))
+    .then(()=>closeSheet())
+    .catch(err=>alert('추가 실패: '+err.message));
+}
+
+function openManual(){
+  openSheetHTML(`<h3>📖 사용 설명서</h3>
+
+  <div class="sec">📅 달력 탭</div>
+  <p class="man">날짜를 탭하면 아래에 그날의 일정이 표시됩니다. 우측 하단 <b>＋</b> 버튼으로 일정을 추가하고,
+  유형(종일·시간·메모·체크)과 <b>색상</b>을 선택할 수 있습니다.
+  종일 일정은 색 배경 띠, 나머지는 색 점(●)으로 달력에 표시됩니다.
+  일정 카드의 <b>＋ 하위 메모</b>로 세부 내용을 붙일 수 있고,
+  체크 유형은 카드 안에서 항목을 추가·체크합니다.
+  <b>👥</b> 버튼으로 다른 사람과 일정을 공유하면 서로 댓글을 남길 수 있습니다.
+  Ⓖ 표시는 구글 캘린더에서 불러온 일정(읽기 전용)입니다.</p>
+
+  <div class="sec">☑️ To-do 탭</div>
+  <p class="man">상단 칩으로 프로젝트 폴더를 이동합니다. <b>선택된 폴더를 한 번 더 탭</b>하면
+  이름 변경 · 색상 지정 · 삭제 메뉴가 열립니다.
+  전체/미완료/완료 필터와 생성순/마감일순/우선순위순 정렬을 지원하고,
+  마감일이 지난 항목은 빨간 배지로 표시됩니다.
+  ＋ 버튼으로 할 일을 추가할 때 폴더·마감일·우선순위를 지정할 수 있습니다.</p>
+
+  <div class="sec">📝 메모 탭</div>
+  <p class="man">폴더 칩으로 이동하고, 메모를 탭하면 전체 화면 편집기가 열립니다.
+  입력 즉시 자동 저장되며 📌으로 상단 고정, 🗑으로 삭제합니다.
+  편집기 하단의 <b>＋ 하위 메모</b>로 짧은 부속 메모를 붙일 수 있습니다.
+  폴더 관리(이름·색상·삭제)는 To-do와 동일하게 선택된 칩 재탭입니다.</p>
+
+  <div class="sec">🔍 검색</div>
+  <p class="man">상단 🔍로 일정·할 일·메모·하위 메모를 한 번에 검색합니다.
+  결과를 탭하면 해당 날짜나 항목으로 바로 이동합니다.</p>
+
+  <div class="sec">👥 공유와 댓글</div>
+  <p class="man">일정의 👥 버튼 → 연락처 칩 선택 또는 이메일 입력 → 공유 시작.
+  상대가 이 앱에서 구글 로그인하면 달력에 자동 표시되고 서로 댓글을 남길 수 있습니다.
+  자주 공유하는 사람은 계정 시트의 <b>연락처</b>에 닉네임으로 등록해두세요.
+  공유한 사람만 멤버 관리와 삭제가 가능합니다.</p>
+
+  <div class="sec">👤 계정 · 동기화</div>
+  <p class="man">Google 로그인하면 모든 기기에서 데이터가 자동 동기화됩니다.
+  우측 상단 점: 회색=로컬만 · 주황=전송 중 · 초록=동기화 완료.
+  <b>Ⓖ 구글 캘린더 불러오기</b>로 구글(및 구글과 연동된 삼성) 캘린더 일정을 표시할 수 있습니다.
+  🌙 버튼으로 다크 모드를 전환합니다.</p>
+
+  <div class="sec">🗑 휴지통</div>
+  <p class="man">삭제한 일정·할 일·메모·하위 메모는 <b>15일간 보관</b> 후 자동 삭제됩니다.
+  계정 시트 → 휴지통에서 남은 기간(D-n)을 확인하고 복원하거나 즉시 비울 수 있습니다.</p>`);
+}
+
+function openContacts(){
+  const rows = S.contacts.map(c=>`
+    <div class="card row">
+      <b style="font-size:13px">${esc(c.nick)}</b>
+      <span class="sub" style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(c.email)}</span>
+      <button class="x" onclick="delContact('${c.id}')">✕</button>
+    </div>`).join('');
+  openSheetHTML(`<h3>👥 공유 연락처</h3>
+    <p class="sub" style="margin:0 0 10px">자주 공유하는 사람을 등록하면 일정 공유 시 닉네임으로 선택할 수 있습니다.</p>
+    ${rows || '<div class="empty">등록된 연락처가 없습니다.</div>'}
+    <div class="row" style="margin-top:10px;gap:6px">
+      <input id="ct-nick" placeholder="닉네임" style="flex:1">
+      <input id="ct-email" placeholder="구글 이메일" style="flex:2">
+    </div>
+    <button class="btn" style="margin-top:8px" onclick="addContact()">연락처 추가</button>`);
+}
+function addContact(){
+  const nick = document.getElementById('ct-nick').value.trim();
+  const email = document.getElementById('ct-email').value.trim().toLowerCase();
+  if(!nick || !email.includes('@')){ alert('닉네임과 올바른 이메일을 입력해주세요.'); return; }
+  S.contacts.push({id:uid(), nick, email});
+  commit(); openContacts();
+}
+function delContact(id){ S.contacts = S.contacts.filter(c=>c.id!==id); commit(); openContacts(); }
+
+/* 연락처 선택 칩 (공유·멤버 추가 공용) */
+let shSel = new Set();
+function contactChipsHTML(excludeEmails){
+  const ex = new Set((excludeEmails||[]).map(e=>e.toLowerCase()));
+  const list = S.contacts.filter(c=>!ex.has(c.email));
+  if(!list.length) return `<p class="sub" style="margin:0 0 8px">등록된 연락처가 없습니다. 👤 → 연락처에서 추가할 수 있어요.</p>`;
+  return `<div class="chips" style="flex-wrap:wrap">${list.map(c=>
+    `<button class="chip ${shSel.has(c.email)?'on':''}" onclick="shTgl('${encodeURIComponent(c.email)}')">${esc(c.nick)}</button>`
+  ).join('')}</div>`;
 }
 
 function openShare(eventId){
   if(!window.FB || !FB.ready){ alert('Firebase 설정 후 사용할 수 있습니다.'); return; }
   if(!FB.user){ alert('공유하려면 먼저 👤 버튼에서 Google 로그인을 해주세요.'); return; }
   const e = S.events.find(x=>x.id===eventId); if(!e) return;
-  openSheetHTML(`<h3>일정 공유: ${esc(e.title)}</h3>
-    <p class="sub" style="margin:0 0 8px">초대할 사람의 구글 이메일을 입력하세요.<br>여러 명은 쉼표(,)로 구분합니다.</p>
-    <input id="sh-emails" placeholder="friend@gmail.com" style="margin-bottom:8px">
-    <p class="sub" style="margin:0 0 12px;font-size:11px">
-      상대방도 이 앱 주소에 접속해 같은 방식으로 로그인하면 달력에 자동 표시되고,
-      서로 댓글을 남길 수 있습니다. 공유하면 이 일정은 공유 일정으로 전환됩니다.</p>
-    <button class="btn" onclick="submitShare('${eventId}')">공유 시작</button>`);
-  document.getElementById('sh-emails').focus();
+  shSel = new Set();
+  window._shSheet = () => {
+    const typed = document.getElementById('sh-emails')?.value || '';
+    openSheetHTML(`<h3>일정 공유: ${esc(e.title)}</h3>
+      <p class="sub" style="margin:0 0 6px">연락처에서 선택하거나 이메일을 직접 입력하세요.</p>
+      ${contactChipsHTML([])}
+      <input id="sh-emails" placeholder="직접 입력: friend@gmail.com (쉼표로 여러 명)" style="margin-bottom:8px">
+      <p class="sub" style="margin:0 0 12px;font-size:11px">
+        상대방도 이 앱에서 로그인하면 달력에 자동 표시되고 서로 댓글을 남길 수 있습니다.</p>
+      <button class="btn" onclick="submitShare('${eventId}')">공유 시작 ${shSel.size?`(${shSel.size}명 선택됨)`:''}</button>`);
+    document.getElementById('sh-emails').value = typed;
+  };
+  window._shSheet();
+}
+function shTgl(enc){
+  const em = decodeURIComponent(enc);
+  if(shSel.has(em)) shSel.delete(em); else shSel.add(em);
+  if(window._shSheet) window._shSheet();
 }
 function submitShare(eventId){
   const raw = document.getElementById('sh-emails').value;
-  const emails = raw.split(',').map(s=>s.trim().toLowerCase()).filter(s=>s.includes('@'));
-  if(!emails.length){ alert('올바른 이메일을 입력해주세요.'); return; }
+  const typed = raw.split(',').map(s=>s.trim().toLowerCase()).filter(s=>s.includes('@'));
+  const emails = [...new Set([...shSel, ...typed])];
+  if(!emails.length){ alert('연락처를 선택하거나 이메일을 입력해주세요.'); return; }
   const e = S.events.find(x=>x.id===eventId); if(!e) return;
   FB.shareCreate(e, emails).then(()=>{
     S.events = S.events.filter(x=>x.id!==eventId); // 로컬 → 공유로 전환
@@ -538,13 +671,6 @@ function shComment(id){
   const v = el.value.trim(); if(!v) return;
   FB.shareComment(id, v).then(()=>{ el.value=''; })
     .catch(err=>alert('댓글 실패: '+err.message));
-}
-function shAddMember(id){
-  const el = document.getElementById('am-'+id);
-  const v = el.value.trim().toLowerCase();
-  if(!v.includes('@')) return;
-  FB.shareAddMember(id, v).then(()=>{ el.value=''; })
-    .catch(err=>alert('추가 실패: '+err.message));
 }
 function shDelMember(id, enc){
   const em = decodeURIComponent(enc);
@@ -596,7 +722,9 @@ function addNote(kind,id,text){
 }
 function delNote(kind,id,nid){
   const p = findParent(kind,id); if(!p || !p.notes) return;
-  p.notes = p.notes.filter(n=>n.id!==nid);
+  const n = p.notes.find(x=>x.id===nid);
+  if(n) toTrash('nt', {title:n.text, note:n, pKind:kind, pId:id});
+  p.notes = p.notes.filter(x=>x.id!==nid);
   commit();
   if(kind==='mm') renderEditorNotes();
 }
@@ -908,8 +1036,10 @@ function openAccount(){
         삼성 캘린더는 삼성 캘린더 앱 설정에서 구글 계정을 연결하면 함께 표시됩니다.</p>
       <button class="btn" style="background:var(--soft);color:var(--text)" onclick="FB.logout()">로그아웃</button>`;
   }
-  inner += `<div class="row" style="margin-top:14px">
+  inner += `<div class="row" style="margin-top:14px;gap:6px">
     <button class="chip" onclick="openTrash()">🗑 휴지통 (${(S.trash||[]).length})</button>
+    <button class="chip" onclick="openContacts()">👥 연락처 (${(S.contacts||[]).length})</button>
+    <button class="chip" onclick="openManual()">📖 설명서</button>
     <span class="sub" style="margin-left:auto">앱 버전 ${APP_VERSION}</span></div>`;
   openSheetHTML(`<h3>계정 · 동기화</h3>${inner}`);
 }

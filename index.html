@@ -89,9 +89,10 @@
   .x{border:none; background:none; color:var(--sub); font-size:13px; padding:4px;}
   /* FAB */
   .fab{
-    position:fixed; left:50%; transform:translateX(-50%); bottom:calc(72px + env(safe-area-inset-bottom,0px));
+    position:fixed; right:18px; bottom:calc(72px + env(safe-area-inset-bottom,0px));
     width:52px; height:52px; border-radius:50%; border:none; z-index:9;
-    background:var(--blue); color:#fff; font-size:26px;
+    background:var(--blue); color:#fff; font-size:26px; line-height:1; padding:0;
+    display:flex; align-items:center; justify-content:center;
     box-shadow:0 6px 16px rgba(10,108,255,.35);
   }
   /* 바텀 시트 */
@@ -158,6 +159,7 @@
   .note span{flex:1; white-space:pre-wrap; word-break:break-word;}
   .note-add{font-size:11px; padding:4px 10px;}
   .note-in{font-size:12px; padding:7px 10px; margin-top:4px;}
+  .chip .fdot{display:inline-block; width:8px; height:8px; border-radius:8px; margin-right:5px; vertical-align:middle;}
   /* 색상 선택 */
   .swatches{display:flex; gap:8px; flex-wrap:wrap; padding:2px 0 12px;}
   .sw{width:26px; height:26px; border-radius:50%; border:2px solid transparent; padding:0;}
@@ -217,6 +219,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
+const APP_VERSION = 'v5.1';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -246,10 +249,10 @@ applyTheme();
 
 let S = load();
 S.trash = S.trash || [];
-purgeTrash(false);
 
 /* ---------- 휴지통 (15일 보관 후 자동 삭제) ---------- */
 const TRASH_DAYS = 15;
+purgeTrash(false);
 function purgeTrash(persist=true){
   if(!S.trash) return;
   const cut = Date.now() - TRASH_DAYS*864e5;
@@ -640,7 +643,7 @@ function renderTodo(){
   const folders = S.todoFolders;
   const chips = `<div class="chips">
     <button class="chip ${todoFolder==='ALL'?'on':''}" onclick="todoFolder='ALL';render()">전체</button>
-    ${folders.map(f=>`<button class="chip ${todoFolder===f.id?'on':''}" onclick="selectTodoFolderChip('${f.id}')">${esc(f.name)}</button>`).join('')}
+    ${folders.map(f=>`<button class="chip ${todoFolder===f.id?'on':''}" onclick="selectTodoFolderChip('${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${esc(f.name)}</button>`).join('')}
     <button class="chip" onclick="promptTodoFolder()">＋ 폴더</button>
   </div>`;
   const filters = `<div class="chips">
@@ -661,8 +664,9 @@ function renderTodo(){
   const tk = todayKey();
   const rows = list.map(t=>{
     const over = t.due && !t.done && t.due < tk;
-    const folder = todoFolder==='ALL' ? `<span class="sub">${esc(folders.find(f=>f.id===t.folderId)?.name||'')}</span>` : '';
-    return `<div class="card">
+    const fObj = folders.find(f=>f.id===t.folderId);
+    const folder = todoFolder==='ALL' ? `<span class="sub">${esc(fObj?.name||'')}</span>` : '';
+    return `<div class="card" style="border-left:3px solid ${fObj?.color||'transparent'}">
       <div class="todo">
         <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
         <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
@@ -695,9 +699,18 @@ function manageFolder(kind, id){
     ? S.todos.filter(t=>t.folderId===id).length
     : S.memos.filter(m=>m.folderId===id).length;
   openSheetHTML(`<h3>폴더: ${esc(f.name)}</h3>
-    <p class="sub" style="margin:0 0 12px">포함된 항목 ${cnt}개</p>
+    <p class="sub" style="margin:0 0 10px">포함된 항목 ${cnt}개</p>
+    <div class="sub" style="margin-bottom:4px">폴더 색상</div>
+    <div class="swatches">${PALETTE.map(c=>
+      `<button class="sw ${(f.color||'')===c?'on':''}" style="background:${c}" onclick="setFolderColor('${kind}','${id}','${c}')"></button>`).join('')}</div>
     <button class="btn" style="margin-bottom:8px" onclick="renameFolder('${kind}','${id}')">이름 변경</button>
     <button class="btn" style="background:var(--red)" onclick="deleteFolder('${kind}','${id}')">폴더 삭제</button>`);
+}
+function setFolderColor(kind, id, color){
+  const arr = kind==='todo' ? S.todoFolders : S.memoFolders;
+  const f = arr.find(x=>x.id===id); if(!f) return;
+  f.color = color;
+  commit(); manageFolder(kind, id); // 시트 갱신
 }
 function renameFolder(kind, id){
   const arr = kind==='todo' ? S.todoFolders : S.memoFolders;
@@ -762,13 +775,14 @@ function openAddTodo(){
 /* ---------- 메모 ---------- */
 function renderMemo(){
   const chips = `<div class="chips">
-    ${S.memoFolders.map(f=>`<button class="chip ${memoFolder===f.id?'on':''}" onclick="selectMemoFolderChip('${f.id}')">${esc(f.name)}</button>`).join('')}
+    ${S.memoFolders.map(f=>`<button class="chip ${memoFolder===f.id?'on':''}" onclick="selectMemoFolderChip('${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${esc(f.name)}</button>`).join('')}
     <button class="chip" onclick="promptMemoFolder()">＋ 폴더</button>
   </div>`;
   const list = S.memos.filter(m=>m.folderId===memoFolder)
     .sort((a,b)=> (b.pinned?1:0)-(a.pinned?1:0) || b.updated.localeCompare(a.updated));
   const rows = list.map(m=>`
-    <div class="card memo-item" onclick="openEditor('${m.id}')">
+    <div class="card memo-item" onclick="openEditor('${m.id}')"
+      style="border-left:3px solid ${(S.memoFolders.find(f=>f.id===m.folderId)?.color)||'transparent'}">
       <div class="ttl">${m.pinned?'📌 ':''}${esc(m.title||'제목 없음')}</div>
       <div class="pv">${m.updated.slice(5,16)}${(m.notes||[]).length?` · 하위 ${m.notes.length}`:''} · ${esc((m.body||'').split('\n')[0]||'내용 없음')}</div>
     </div>`).join('');
@@ -894,7 +908,9 @@ function openAccount(){
         삼성 캘린더는 삼성 캘린더 앱 설정에서 구글 계정을 연결하면 함께 표시됩니다.</p>
       <button class="btn" style="background:var(--soft);color:var(--text)" onclick="FB.logout()">로그아웃</button>`;
   }
-  inner += `<button class="chip" style="margin-top:14px" onclick="openTrash()">🗑 휴지통 (${(S.trash||[]).length})</button>`;
+  inner += `<div class="row" style="margin-top:14px">
+    <button class="chip" onclick="openTrash()">🗑 휴지통 (${(S.trash||[]).length})</button>
+    <span class="sub" style="margin-left:auto">앱 버전 ${APP_VERSION}</span></div>`;
   openSheetHTML(`<h3>계정 · 동기화</h3>${inner}`);
 }
 function setSyncDot(color){ const d=document.getElementById('sync-dot'); if(d) d.style.background=color; }

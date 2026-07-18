@@ -160,16 +160,48 @@
   .note-add{font-size:11px; padding:4px 10px;}
   .note-in{font-size:12px; padding:7px 10px; margin-top:4px;}
   .chip .fdot{display:inline-block; width:8px; height:8px; border-radius:8px; margin-right:5px; vertical-align:middle;}
-  .man{font-size:12.5px; line-height:1.75; color:var(--text); margin:2px 0 6px;}
+  .man-row{display:flex; gap:10px; align-items:flex-start; padding:5px 2px;}
+  .man-ic{width:30px; flex-shrink:0; text-align:center; font-size:13px; line-height:1.5;}
+  .man-row b{display:block; font-size:12.5px; color:var(--text);}
+  .man-row span:last-child{font-size:11.5px; color:var(--sub); line-height:1.5;}
   /* 공유 댓글 */
   .cmts{margin:8px 0 6px; padding-left:8px; border-left:2px solid var(--border); display:flex; flex-direction:column; gap:6px;}
   .cmt-h{display:flex; gap:6px; align-items:baseline; font-size:11px;}
   .cmt-h b{color:var(--text); font-size:12px;}
   .cmt-b{font-size:12.5px; color:var(--text); white-space:pre-wrap; word-break:break-word; line-height:1.5;}
+  /* 커스텀 다이얼로그 */
+  .modal-bg{position:fixed; inset:0; background:rgba(0,0,0,.42); z-index:70;
+    display:none; align-items:center; justify-content:center; padding:36px 28px;}
+  .modal-bg.open{display:flex;}
+  .modal{background:var(--card); border-radius:18px; padding:20px 18px; width:100%; max-width:320px;
+    box-shadow:0 20px 50px rgba(0,0,0,.35);}
+  .modal-t{font-size:15px; font-weight:700; margin-bottom:6px; color:var(--text);}
+  .modal-m{font-size:13px; line-height:1.65; color:var(--sub); margin:0; white-space:pre-wrap;}
+  .modal-btns{display:flex; gap:8px; margin-top:16px;}
+  .modal-btns .btn{padding:11px;}
+  .mghost{background:var(--soft) !important; color:var(--text) !important;}
+  .mdanger{background:var(--red) !important;}
+  /* 주간 뷰 */
+  .wk{display:flex; flex-direction:column; gap:1px; background:var(--border); border:1px solid var(--border); border-radius:14px; overflow:hidden;}
+  .wk-day{display:flex; gap:10px; background:var(--card); padding:8px 10px; min-height:44px;}
+  .wk-day.sel{background:var(--blue-soft);}
+  .wk-h{display:flex; flex-direction:column; align-items:center; width:32px; flex-shrink:0;}
+  .wk-dow{font-size:10px; font-weight:600;}
+  .wk-num{font-size:14px; font-weight:600; min-width:24px; text-align:center; border-radius:12px; line-height:22px;}
+  .wk-num.today{background:var(--red); color:#fff;}
+  .wk-evs{flex:1; display:flex; flex-direction:column; gap:2px; min-width:0;}
+  .wk-evs .ev{font-size:11px;}
+  /* 드래그 이동 */
+  .ev[data-evid]{touch-action:none;}
+  .cell.drop{outline:2px solid var(--blue); outline-offset:-2px;}
+  #drag-ghost{position:fixed; z-index:60; pointer-events:none; background:var(--blue); color:#fff;
+    font-size:12px; padding:5px 12px; border-radius:10px; transform:translate(-50%,-130%);
+    box-shadow:0 6px 16px rgba(0,0,0,.35); white-space:nowrap;}
   /* 색상 선택 */
   .swatches{display:flex; gap:8px; flex-wrap:wrap; padding:2px 0 12px;}
   .sw{width:26px; height:26px; border-radius:50%; border:2px solid transparent; padding:0;}
   .sw.on{border-color:var(--text); box-shadow:0 0 0 2px var(--bg) inset;}
+  .sw.rainbow{background:conic-gradient(#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00);}
   /* 달력 dot 형 일정 */
   .ev.dotline{display:flex; align-items:center; gap:3px; background:none !important; color:var(--text); padding-left:0;}
   .ev.dotline .dt{width:5px; height:5px; border-radius:5px; flex-shrink:0;}
@@ -201,6 +233,11 @@
   <div class="sheet" id="sheet"></div>
 </div>
 
+<!-- 커스텀 다이얼로그 -->
+<div class="modal-bg" id="modal-bg">
+  <div class="modal" id="modal"></div>
+</div>
+
 <!-- 메모 에디터 -->
 <div class="editor" id="editor">
   <header>
@@ -225,7 +262,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v6.1';
+const APP_VERSION = 'v7';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -314,9 +351,71 @@ function restoreTrash(id){
 }
 function purgeOne(id){ S.trash = S.trash.filter(t=>t.id!==id); commit(); openTrash(); }
 function emptyTrash(){
-  if(!confirm('휴지통을 완전히 비울까요? 복원할 수 없습니다.')) return;
-  S.trash = []; commit(); openTrash();
+  appConfirm('휴지통을 완전히 비울까요?\n복원할 수 없습니다.', ()=>{
+    S.trash = []; commit(); openTrash();
+  }, {title:'휴지통 비우기', danger:true, yes:'모두 삭제'});
 }
+
+/* ---------- 드래그로 일정 날짜 이동 (달력 칩을 길게 눌러 끌기) ---------- */
+let _drag = null;
+function _cellAt(x, y){
+  const el = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
+  return el && el.closest ? el.closest('.cell[data-key], .wk-day[data-key]') : null;
+}
+function _clearDrop(){
+  document.querySelectorAll('.cell.drop, .wk-day.drop').forEach(c=>c.classList.remove('drop'));
+}
+document.addEventListener('pointerdown', e=>{
+  const chip = e.target.closest ? e.target.closest('.ev[data-evid]') : null;
+  if(!chip) return;
+  const id = chip.dataset.evid;
+  _drag = { id, x:e.clientX, y:e.clientY, active:false,
+    timer: setTimeout(()=>{
+      if(!_drag) return;
+      _drag.active = true;
+      const ev = S.events.find(x=>x.id===id);
+      const g = document.createElement('div');
+      g.id = 'drag-ghost'; g.textContent = '📅 ' + (ev ? ev.title : '');
+      g.style.left = _drag.x+'px'; g.style.top = _drag.y+'px';
+      document.body.appendChild(g);
+      if(navigator.vibrate) navigator.vibrate(30);
+    }, 400) };
+});
+document.addEventListener('pointermove', e=>{
+  if(!_drag) return;
+  if(!_drag.active){
+    if(Math.hypot(e.clientX-_drag.x, e.clientY-_drag.y) > 12){ clearTimeout(_drag.timer); _drag = null; }
+    return;
+  }
+  e.preventDefault();
+  const g = document.getElementById('drag-ghost');
+  if(g){ g.style.left = e.clientX+'px'; g.style.top = e.clientY+'px'; }
+  _clearDrop();
+  const cell = _cellAt(e.clientX, e.clientY);
+  if(cell) cell.classList.add('drop');
+}, {passive:false});
+function _endDrag(e, doDrop){
+  if(!_drag) return;
+  clearTimeout(_drag.timer);
+  const wasActive = _drag.active, id = _drag.id;
+  _drag = null;
+  const g = document.getElementById('drag-ghost'); if(g) g.remove();
+  _clearDrop();
+  if(wasActive && doDrop){
+    const cell = _cellAt(e.clientX, e.clientY);
+    if(cell){
+      const ev = S.events.find(x=>x.id===id);
+      if(ev && ev.date !== cell.dataset.key){
+        ev.date = cell.dataset.key; selDate = cell.dataset.key; commit();
+      }
+    }
+  }
+}
+document.addEventListener('pointerup', e=>_endDrag(e, true));
+document.addEventListener('pointercancel', e=>_endDrag(e, false));
+document.addEventListener('contextmenu', e=>{
+  if(e.target.closest && e.target.closest('.ev[data-evid]')) e.preventDefault();
+});
 
 /* 키보드가 입력란을 가리는 문제 보정 */
 document.addEventListener('focusin', e=>{
@@ -375,6 +474,131 @@ function onFab(){
 }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
+/* ================= 커스텀 다이얼로그 ================= */
+let _mCb = null;
+function _modal(html){
+  document.getElementById('modal').innerHTML = html;
+  document.getElementById('modal-bg').classList.add('open');
+}
+function closeModal(){ document.getElementById('modal-bg').classList.remove('open'); _mCb=null; }
+function _mYes(){ const cb=_mCb; closeModal(); if(cb) cb(); }
+function _mSubmit(){
+  const v = document.getElementById('modal-in') ? document.getElementById('modal-in').value : '';
+  const cb=_mCb; closeModal(); if(cb) cb(v);
+}
+function appAlert(msg, title){
+  _modal(`<div class="modal-t">${esc(title||'알림')}</div>
+    <p class="modal-m">${esc(msg)}</p>
+    <div class="modal-btns"><button class="btn" onclick="closeModal()">확인</button></div>`);
+}
+function appConfirm(msg, onYes, opts){
+  opts = opts||{}; _mCb = onYes;
+  _modal(`<div class="modal-t">${esc(opts.title||'확인')}</div>
+    <p class="modal-m">${esc(msg)}</p>
+    <div class="modal-btns">
+      <button class="btn mghost" onclick="closeModal()">취소</button>
+      <button class="btn ${opts.danger?'mdanger':''}" onclick="_mYes()">${esc(opts.yes||'확인')}</button>
+    </div>`);
+}
+function appPrompt(msg, def, onSubmit, opts){
+  opts = opts||{}; _mCb = onSubmit;
+  _modal(`<div class="modal-t">${esc(opts.title||msg)}</div>
+    ${opts.title?`<p class="modal-m" style="margin-bottom:8px">${esc(msg)}</p>`:''}
+    <input id="modal-in" value="${esc(def||'')}" placeholder="${esc(opts.ph||'')}"
+      style="margin-top:10px" onkeydown="if(event.key==='Enter')_mSubmit()">
+    <div class="modal-btns">
+      <button class="btn mghost" onclick="closeModal()">취소</button>
+      <button class="btn" onclick="_mSubmit()">${esc(opts.yes||'확인')}</button>
+    </div>`);
+  const inp = document.getElementById('modal-in');
+  if(inp && inp.focus) inp.focus();
+}
+
+/* ---------- 원형 컬러휠 ---------- */
+function _hsvHex(hh, ss, vv){
+  const c = vv*ss, x = c*(1-Math.abs((hh/60)%2-1)), m = vv-c;
+  let r=0,g=0,b=0;
+  if(hh<60){r=c;g=x;} else if(hh<120){r=x;g=c;} else if(hh<180){g=c;b=x;}
+  else if(hh<240){g=x;b=c;} else if(hh<300){r=x;b=c;} else {r=c;b=x;}
+  const to = n => Math.round((n+m)*255).toString(16).padStart(2,'0');
+  return '#'+to(r)+to(g)+to(b);
+}
+function _hexHsv(hex){
+  const m = /^#([0-9a-f]{6})$/i.exec(hex||''); if(!m) return null;
+  const r=parseInt(m[1].slice(0,2),16)/255, g=parseInt(m[1].slice(2,4),16)/255, b=parseInt(m[1].slice(4,6),16)/255;
+  const mx=Math.max(r,g,b), mn=Math.min(r,g,b), d=mx-mn;
+  let hh=0;
+  if(d){ if(mx===r) hh=60*(((g-b)/d)%6); else if(mx===g) hh=60*((b-r)/d+2); else hh=60*((r-g)/d+4); }
+  if(hh<0) hh+=360;
+  return {h:hh, s:mx?d/mx:0, v:mx};
+}
+function openColorWheel(initial, cb){
+  const init = _hexHsv(initial) || {h:210, s:1, v:1};
+  let H=init.h, Sv=init.s, V=Math.max(0.25, init.v);
+  _modal(`<div class="modal-t">색상 직접 선택</div>
+    <canvas id="cw" width="220" height="220"
+      style="width:220px;height:220px;display:block;margin:12px auto 4px;border-radius:50%;touch-action:none"></canvas>
+    <div class="sub" style="text-align:center;margin-bottom:2px">밝기</div>
+    <input type="range" id="cw-v" min="25" max="100" value="${Math.round(V*100)}" style="width:100%;padding:0;background:none">
+    <div class="row" style="margin-top:12px;justify-content:center;gap:10px">
+      <span id="cw-prev" style="width:36px;height:36px;border-radius:50%;border:2px solid var(--border);flex-shrink:0"></span>
+      <span id="cw-hex" class="sub"></span>
+    </div>
+    <div class="modal-btns">
+      <button class="btn mghost" onclick="closeModal()">취소</button>
+      <button class="btn" id="cw-ok">선택</button>
+    </div>`);
+  const cv = document.getElementById('cw');
+  const upd = () => {
+    const hex = _hsvHex(H, Sv, V);
+    const p = document.getElementById('cw-prev'), t = document.getElementById('cw-hex');
+    if(p) p.style.background = hex;
+    if(t) t.textContent = hex.toUpperCase();
+    return hex;
+  };
+  const draw = () => {
+    try{
+      const ctx = cv.getContext('2d'); if(!ctx) return;
+      const W=220, R=W/2, img = ctx.createImageData(W, W);
+      for(let y=0;y<W;y++) for(let x=0;x<W;x++){
+        const dx=x-R, dy=y-R, r=Math.hypot(dx,dy);
+        const i=(y*W+x)*4;
+        if(r>R){ img.data[i+3]=0; continue; }
+        let ang = Math.atan2(dy,dx)*180/Math.PI; if(ang<0) ang+=360;
+        const hex = _hsvHex(ang, Math.min(1,r/R), V);
+        img.data[i]=parseInt(hex.slice(1,3),16);
+        img.data[i+1]=parseInt(hex.slice(3,5),16);
+        img.data[i+2]=parseInt(hex.slice(5,7),16);
+        img.data[i+3]=255;
+      }
+      ctx.putImageData(img,0,0);
+    }catch(_){}
+  };
+  const pick = e => {
+    try{
+      const rect = cv.getBoundingClientRect();
+      const x = (e.clientX-rect.left)*(220/rect.width)-110;
+      const y = (e.clientY-rect.top)*(220/rect.height)-110;
+      const r = Math.hypot(x,y); if(r>112) return;
+      let ang = Math.atan2(y,x)*180/Math.PI; if(ang<0) ang+=360;
+      H = ang; Sv = Math.min(1, r/110);
+      upd();
+    }catch(_){}
+  };
+  if(cv && cv.addEventListener){
+    let down=false;
+    cv.addEventListener('pointerdown', e=>{down=true; pick(e); e.preventDefault();});
+    cv.addEventListener('pointermove', e=>{if(down) pick(e); e.preventDefault();});
+    cv.addEventListener('pointerup', ()=>down=false);
+    cv.addEventListener('pointercancel', ()=>down=false);
+  }
+  const sl = document.getElementById('cw-v');
+  if(sl) sl.oninput = ()=>{ V = (+sl.value)/100; draw(); upd(); };
+  const ok = document.getElementById('cw-ok');
+  if(ok) ok.onclick = ()=>{ const hex = upd(); closeModal(); cb(hex); };
+  draw(); upd();
+}
+
 /* ================= 렌더 ================= */
 function render(){
   document.querySelectorAll('nav button').forEach((b,i)=>b.classList.toggle('on', i===tab && !searchMode));
@@ -387,7 +611,52 @@ function render(){
 }
 
 /* ---------- 달력 ---------- */
+/* ---------- 반복 일정 ---------- */
+const REPEAT_LABEL = {none:'없음', daily:'매일', weekly:'매주', monthly:'매월'};
+function occursOn(e, k){
+  if(!e.repeat || e.repeat==='none') return e.date===k;
+  if(k < e.date) return false;
+  if(e.repeat==='daily') return true;
+  if(e.repeat==='weekly') return new Date(k+'T00:00').getDay() === new Date(e.date+'T00:00').getDay();
+  if(e.repeat==='monthly') return k.slice(8,10) === e.date.slice(8,10);
+  return e.date===k;
+}
+let calView = 'month'; // 'month' | 'week'
+
+/* 해당 날짜의 모든 표시 항목 (일정 + 공유 + 구글 + 마감 할 일) */
+function dayItems(k){
+  return [
+    ...S.events.filter(e=>occursOn(e,k)),
+    ...sharedEvents.filter(e=>e.date===k),
+    ...gcalEvents.filter(e=>e.date===k),
+    ...S.todos.filter(t=>t.due===k && !t.done).map(t=>({ ...t, _td:true })),
+  ];
+}
+function chipHTML(e){
+  const c = e._td ? PRI[e.priority][1] : evColor(e);
+  const sh = e._sh ? '👥 ' : (e._gc ? 'Ⓖ ' : (e._td ? '☑ ' : ''));
+  const drag = (!e._sh && !e._gc && !e._td && (!e.repeat||e.repeat==='none')) ? ` data-evid="${e.id}"` : '';
+  if(!e._td && e.type==='allday')
+    return `<div class="ev"${drag} style="background:${c};color:#fff">${sh}${esc(e.title)}</div>`;
+  const label = (!e._td && e.type==='timed' ? e.start+' ' : '') + e.title;
+  return `<div class="ev dotline"${drag}><span class="dt" style="background:${c}"></span><em>${sh}${esc(label)}</em></div>`;
+}
+
 function renderCalendar(){
+  const head = `
+    <div class="cal-head">
+      <span class="title">${calView==='month' ? `${calY}년 ${calM+1}월` : weekTitle()}</span>
+      <button class="chip ${calView==='month'?'on':''}" onclick="calView='month';render()">월</button>
+      <button class="chip ${calView==='week'?'on':''}" onclick="calView='week';render()">주</button>
+      <button class="icon-btn" onclick="navCal(-1)">‹</button>
+      <button class="icon-btn" style="width:auto;padding:0 12px;font-size:12px" onclick="goToday()">오늘</button>
+      <button class="icon-btn" onclick="navCal(1)">›</button>
+    </div>`;
+  const body = calView==='month' ? monthGridHTML() : weekListHTML();
+  return head + body + dayDetailHTML();
+}
+
+function monthGridHTML(){
   const first = new Date(calY, calM, 1);
   const startDow = first.getDay();
   const dim = new Date(calY, calM+1, 0).getDate();
@@ -396,33 +665,62 @@ function renderCalendar(){
   for(let d=1;d<=dim;d++) cells.push(d);
   while(cells.length%7) cells.push(null);
   const tk = todayKey();
-
   let grid = '';
   cells.forEach(d=>{
     if(d===null){ grid += `<div class="cell"></div>`; return; }
     const k = keyOf(calY, calM, d);
-    const evs = [...S.events.filter(e=>e.date===k), ...sharedEvents.filter(e=>e.date===k), ...gcalEvents.filter(e=>e.date===k)];
+    const items = dayItems(k);
     const cls = `cell${k===tk?' today':''}${k===selDate?' sel':''}`;
-    let chips = evs.slice(0,2).map(e=>{
-      const c = evColor(e);
-      const sh = e._sh ? '👥' : (e._gc ? 'Ⓖ' : '');
-      if(e.type==='allday'){
-        return `<div class="ev" style="background:${c};color:#fff">${sh}${esc(e.title)}</div>`;
-      }
-      const label = (e.type==='timed'? e.start+' ':'') + e.title;
-      return `<div class="ev dotline"><span class="dt" style="background:${c}"></span><em>${sh}${esc(label)}</em></div>`;
-    }).join('');
-    if(evs.length>2) chips += `<div class="more">+${evs.length-2}</div>`;
-    grid += `<div class="${cls}" onclick="selDate='${k}';render()"><span class="d">${d}</span>${chips}</div>`;
+    let chips = items.slice(0,2).map(chipHTML).join('');
+    if(items.length>2) chips += `<div class="more">+${items.length-2}</div>`;
+    grid += `<div class="${cls}" data-key="${k}" onclick="selDate='${k}';render()"><span class="d">${d}</span>${chips}</div>`;
   });
+  return `
+    <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+    <div class="grid">${grid}</div>`;
+}
 
-  const dayEvs = S.events.filter(e=>e.date===selDate);
+function weekDays(){
+  const base = new Date(selDate+'T00:00');
+  const start = new Date(base); start.setDate(base.getDate()-base.getDay());
+  return [...Array(7)].map((_,i)=>{
+    const d = new Date(start); d.setDate(start.getDate()+i);
+    return keyOf(d.getFullYear(), d.getMonth(), d.getDate());
+  });
+}
+function weekTitle(){
+  const ds = weekDays();
+  const f = ds[0], l = ds[6];
+  return `${+f.slice(5,7)}/${+f.slice(8,10)} – ${+l.slice(5,7)}/${+l.slice(8,10)}`;
+}
+function weekListHTML(){
+  const tk = todayKey();
+  const names = ['일','월','화','수','목','금','토'];
+  return `<div class="wk">` + weekDays().map((k,i)=>{
+    const items = dayItems(k);
+    const isToday = k===tk, isSel = k===selDate;
+    return `<div class="wk-day ${isSel?'sel':''}" data-key="${k}" onclick="selDate='${k}';render()">
+      <div class="wk-h">
+        <span class="wk-dow" style="color:${i===0?'var(--red)':i===6?'var(--blue)':'var(--sub)'}">${names[i]}</span>
+        <span class="wk-num ${isToday?'today':''}">${+k.slice(8,10)}</span>
+      </div>
+      <div class="wk-evs">${items.map(chipHTML).join('') || '<span class="sub" style="font-size:10px">—</span>'}</div>
+    </div>`;
+  }).join('') + `</div>`;
+}
+
+/* 날짜 상세 (월/주 공용) */
+function dayDetailHTML(){
+  const dayEvs = S.events.filter(e=>occursOn(e, selDate));
   const sharedDay = sharedEvents.filter(e=>e.date===selDate);
   const gcalDay = gcalEvents.filter(e=>e.date===selDate);
-  const totalDay = dayEvs.length + sharedDay.length + gcalDay.length;
+  const dueTodos = S.todos.filter(t=>t.due===selDate);
+  const totalDay = dayEvs.length + sharedDay.length + gcalDay.length + dueTodos.length;
   let detail = totalDay ? '' : `<div class="empty">일정이 없습니다.<br>＋ 버튼으로 추가하세요.</div>`;
+
   dayEvs.forEach(e=>{
     const label = TYPES[e.type][0], c = evColor(e);
+    const rep = (e.repeat && e.repeat!=='none') ? ` · ${REPEAT_LABEL[e.repeat]} 반복` : '';
     let extra = '';
     if(e.type==='checklist'){
       extra = (e.items||[]).map(it=>`
@@ -437,13 +735,28 @@ function renderCalendar(){
       <div class="row">
         <span class="dot" style="background:${c}"></span>
         <b style="font-size:13px;flex:1">${esc(e.title)}</b>
+        <button class="x" title="수정" onclick="openEventSheet('${e.id}')">✎</button>
         <button class="x" title="공유" onclick="openShare('${e.id}')">👥</button>
         <button class="x" onclick="delEvent('${e.id}')">✕</button>
       </div>
-      <div class="sub" style="margin-left:16px">${label}${e.type==='timed'?` · ${e.start} – ${e.end}`:''}</div>
+      <div class="sub" style="margin-left:16px">${label}${e.type==='timed'?` · ${e.start} – ${e.end}`:''}${rep}</div>
       ${extra}
       ${notesHTML('ev', e)}</div>`;
   });
+
+  dueTodos.forEach(t=>{
+    const fObj = S.todoFolders.find(f=>f.id===t.folderId);
+    detail += `<div class="card" style="border-left:3px solid ${fObj?.color||'transparent'}">
+      <div class="todo">
+        <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
+        <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
+        <span class="t ${t.done?'done':''}">☑ ${esc(t.title)}</span>
+        <span class="sub">${esc(fObj?.name||'')}</span>
+        <button class="x" onclick="openEditTodo('${t.id}')">✎</button>
+      </div>
+    </div>`;
+  });
+
   sharedDay.forEach(e=>{ detail += sharedCardHTML(e); });
   gcalDay.forEach(e=>{
     detail += `<div class="card" style="opacity:.85">
@@ -455,24 +768,24 @@ function renderCalendar(){
     </div>`;
   });
 
-  return `
-    <div class="cal-head">
-      <span class="title">${calY}년 ${calM+1}월</span>
-      <button class="icon-btn" onclick="moveMonth(-1)">‹</button>
-      <button class="icon-btn" style="width:auto;padding:0 12px;font-size:12px" onclick="goToday()">오늘</button>
-      <button class="icon-btn" onclick="moveMonth(1)">›</button>
-    </div>
-    <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
-    <div class="grid">${grid}</div>
-    <div class="day-title"><b>${selDate.replaceAll('-','. ')}</b><span class="sub">일정 ${totalDay}개</span></div>
-    ${detail}`;
+  return `<div class="day-title"><b>${selDate.replaceAll('-','. ')}</b><span class="sub">일정 ${totalDay}개</span></div>` + detail;
+}
+
+function navCal(delta){
+  if(calView==='month'){ moveMonth(delta); return; }
+  const d = new Date(selDate+'T00:00'); d.setDate(d.getDate()+7*delta);
+  selDate = keyOf(d.getFullYear(), d.getMonth(), d.getDate());
+  calY = d.getFullYear(); calM = d.getMonth();
+  render();
 }
 function moveMonth(d){ calM+=d; if(calM<0){calM=11;calY--;} if(calM>11){calM=0;calY++;} render(); }
 function goToday(){ const n=new Date(); calY=n.getFullYear(); calM=n.getMonth(); selDate=todayKey(); render(); }
 function delEvent(id){
   const e = S.events.find(x=>x.id===id); if(!e) return;
-  toTrash('ev', e);
-  S.events = S.events.filter(x=>x.id!==id); commit();
+  const doDel = ()=>{ toTrash('ev', e); S.events = S.events.filter(x=>x.id!==id); commit(); };
+  if(e.repeat && e.repeat!=='none')
+    appConfirm('반복 일정입니다. 모든 반복이 함께 휴지통으로 이동합니다.', doDel, {title:'반복 일정 삭제', danger:true, yes:'삭제'});
+  else doDel();
 }
 
 /* ---------- 일정 공유 ---------- */
@@ -489,10 +802,10 @@ try{
 window.setGcal = list => { gcalEvents = list; gcalAt = Date.now(); render(); };
 window.cacheGcal = list => store.set('planner_gcal', JSON.stringify({at:Date.now(), list}));
 function gcalRefresh(){
-  if(!window.FB || !FB.ready){ alert('Firebase 설정 후 사용할 수 있습니다.'); return; }
+  if(!window.FB || !FB.ready){ appAlert('Firebase 설정 후 사용할 수 있습니다.'); return; }
   FB.gcalLoad()
-    .then(n=>{ closeSheet(); alert(`구글 캘린더 일정 ${n}개를 불러왔습니다.\n(삼성 캘린더 일정도 구글 계정과 동기화되어 있다면 함께 표시됩니다)`); })
-    .catch(err=>alert('불러오기 실패: '+err.message));
+    .then(n=>{ closeSheet(); appAlert(`구글 캘린더 일정 ${n}개를 불러왔습니다.\n삼성 캘린더도 구글 계정과 동기화되어 있다면 함께 표시됩니다.`, '불러오기 완료'); })
+    .catch(err=>appAlert(err.message, '불러오기 실패'));
 }
 
 function sharedCardHTML(e){
@@ -544,56 +857,43 @@ function submitAddMember(shareId){
   const raw = document.getElementById('am-email').value;
   const typed = raw.split(',').map(s=>s.trim().toLowerCase()).filter(s=>s.includes('@'));
   const emails = [...new Set([...shSel, ...typed])];
-  if(!emails.length){ alert('연락처를 선택하거나 이메일을 입력해주세요.'); return; }
+  if(!emails.length){ appAlert('연락처를 선택하거나 이메일을 입력해주세요.'); return; }
   Promise.all(emails.map(em=>FB.shareAddMember(shareId, em)))
     .then(()=>closeSheet())
-    .catch(err=>alert('추가 실패: '+err.message));
+    .catch(err=>appAlert(err.message, '추가 실패'));
 }
 
 function openManual(){
+  const row = (ic, t, d) => `<div class="man-row"><span class="man-ic">${ic}</span>
+    <div><b>${t}</b><span>${d}</span></div></div>`;
   openSheetHTML(`<h3>📖 사용 설명서</h3>
 
-  <div class="sec">📅 달력 탭</div>
-  <p class="man">날짜를 탭하면 아래에 그날의 일정이 표시됩니다. 우측 하단 <b>＋</b> 버튼으로 일정을 추가하고,
-  유형(종일·시간·메모·체크)과 <b>색상</b>을 선택할 수 있습니다.
-  종일 일정은 색 배경 띠, 나머지는 색 점(●)으로 달력에 표시됩니다.
-  일정 카드의 <b>＋ 하위 메모</b>로 세부 내용을 붙일 수 있고,
-  체크 유형은 카드 안에서 항목을 추가·체크합니다.
-  <b>👥</b> 버튼으로 다른 사람과 일정을 공유하면 서로 댓글을 남길 수 있습니다.
-  Ⓖ 표시는 구글 캘린더에서 불러온 일정(읽기 전용)입니다.</p>
+  <div class="sec">📅 달력</div>
+  ${row('＋','일정 추가','유형 · 색상 · 반복(매일/매주/매월) 설정')}
+  ${row('월/주','보기 전환','월간 달력 ↔ 주간 목록')}
+  ${row('✎','일정 수정','제목 · 날짜 · 시간 · 색상 · 반복 변경')}
+  ${row('👆','길게 눌러 이동','일정을 끌어서 다른 날짜로 (반복 제외)')}
+  ${row('☑','마감 할 일','마감일 있는 할 일이 달력에 자동 표시')}
+  ${row('👥','공유','상대를 초대하면 서로 댓글 가능')}
+  ${row('Ⓖ','구글 일정','계정 시트에서 불러오기 (읽기 전용)')}
 
-  <div class="sec">☑️ To-do 탭</div>
-  <p class="man">상단 칩으로 프로젝트 폴더를 이동합니다. <b>선택된 폴더를 한 번 더 탭</b>하면
-  이름 변경 · 색상 지정 · 삭제 메뉴가 열립니다.
-  전체/미완료/완료 필터와 생성순/마감일순/우선순위순 정렬을 지원하고,
-  마감일이 지난 항목은 빨간 배지로 표시됩니다.
-  ＋ 버튼으로 할 일을 추가할 때 폴더·마감일·우선순위를 지정할 수 있습니다.</p>
+  <div class="sec">☑️ To-do</div>
+  ${row('📁','폴더 이동','상단 칩 탭')}
+  ${row('📁²','폴더 관리','선택된 칩 한 번 더 탭 → 이름 · 색상 · 삭제')}
+  ${row('⚙','필터 · 정렬','전체/미완료/완료 · 생성/마감/우선순위순')}
+  ${row('✎','수정','제목 · 폴더 · 마감일 · 우선순위')}
 
-  <div class="sec">📝 메모 탭</div>
-  <p class="man">폴더 칩으로 이동하고, 메모를 탭하면 전체 화면 편집기가 열립니다.
-  입력 즉시 자동 저장되며 📌으로 상단 고정, 🗑으로 삭제합니다.
-  편집기 하단의 <b>＋ 하위 메모</b>로 짧은 부속 메모를 붙일 수 있습니다.
-  폴더 관리(이름·색상·삭제)는 To-do와 동일하게 선택된 칩 재탭입니다.</p>
+  <div class="sec">📝 메모</div>
+  ${row('✍','자동 저장','입력 즉시 저장 · 📌 고정 · 폴더 관리는 칩 재탭')}
+  ${row('↳','하위 메모','일정 · 할 일 · 메모 어디든 부속 메모 추가')}
 
-  <div class="sec">🔍 검색</div>
-  <p class="man">상단 🔍로 일정·할 일·메모·하위 메모를 한 번에 검색합니다.
-  결과를 탭하면 해당 날짜나 항목으로 바로 이동합니다.</p>
-
-  <div class="sec">👥 공유와 댓글</div>
-  <p class="man">일정의 👥 버튼 → 연락처 칩 선택 또는 이메일 입력 → 공유 시작.
-  상대가 이 앱에서 구글 로그인하면 달력에 자동 표시되고 서로 댓글을 남길 수 있습니다.
-  자주 공유하는 사람은 계정 시트의 <b>연락처</b>에 닉네임으로 등록해두세요.
-  공유한 사람만 멤버 관리와 삭제가 가능합니다.</p>
-
-  <div class="sec">👤 계정 · 동기화</div>
-  <p class="man">Google 로그인하면 모든 기기에서 데이터가 자동 동기화됩니다.
-  우측 상단 점: 회색=로컬만 · 주황=전송 중 · 초록=동기화 완료.
-  <b>Ⓖ 구글 캘린더 불러오기</b>로 구글(및 구글과 연동된 삼성) 캘린더 일정을 표시할 수 있습니다.
-  🌙 버튼으로 다크 모드를 전환합니다.</p>
-
-  <div class="sec">🗑 휴지통</div>
-  <p class="man">삭제한 일정·할 일·메모·하위 메모는 <b>15일간 보관</b> 후 자동 삭제됩니다.
-  계정 시트 → 휴지통에서 남은 기간(D-n)을 확인하고 복원하거나 즉시 비울 수 있습니다.</p>`);
+  <div class="sec">👤 계정</div>
+  ${row('●','동기화 상태','회색 로컬 · 주황 전송 중 · 초록 완료')}
+  ${row('Ⓖ','캘린더 불러오기','구글(+연동된 삼성) 일정 표시')}
+  ${row('👥','연락처','닉네임 등록 → 공유 시 탭으로 선택')}
+  ${row('🗑','휴지통','삭제 항목 15일 보관 후 자동 삭제')}
+  ${row('🌙','다크 모드','상단 버튼으로 전환')}
+  ${row('🔍','통합 검색','일정 · 할 일 · 메모 · 하위 메모 한 번에')}`);
 }
 
 function openContacts(){
@@ -615,7 +915,7 @@ function openContacts(){
 function addContact(){
   const nick = document.getElementById('ct-nick').value.trim();
   const email = document.getElementById('ct-email').value.trim().toLowerCase();
-  if(!nick || !email.includes('@')){ alert('닉네임과 올바른 이메일을 입력해주세요.'); return; }
+  if(!nick || !email.includes('@')){ appAlert('닉네임과 올바른 이메일을 입력해주세요.'); return; }
   S.contacts.push({id:uid(), nick, email});
   commit(); openContacts();
 }
@@ -633,8 +933,8 @@ function contactChipsHTML(excludeEmails){
 }
 
 function openShare(eventId){
-  if(!window.FB || !FB.ready){ alert('Firebase 설정 후 사용할 수 있습니다.'); return; }
-  if(!FB.user){ alert('공유하려면 먼저 👤 버튼에서 Google 로그인을 해주세요.'); return; }
+  if(!window.FB || !FB.ready){ appAlert('Firebase 설정 후 사용할 수 있습니다.'); return; }
+  if(!FB.user){ appAlert('공유하려면 먼저 👤 버튼에서\nGoogle 로그인을 해주세요.', '로그인 필요'); return; }
   const e = S.events.find(x=>x.id===eventId); if(!e) return;
   shSel = new Set();
   window._shSheet = () => {
@@ -659,27 +959,29 @@ function submitShare(eventId){
   const raw = document.getElementById('sh-emails').value;
   const typed = raw.split(',').map(s=>s.trim().toLowerCase()).filter(s=>s.includes('@'));
   const emails = [...new Set([...shSel, ...typed])];
-  if(!emails.length){ alert('연락처를 선택하거나 이메일을 입력해주세요.'); return; }
+  if(!emails.length){ appAlert('연락처를 선택하거나 이메일을 입력해주세요.'); return; }
   const e = S.events.find(x=>x.id===eventId); if(!e) return;
   FB.shareCreate(e, emails).then(()=>{
     S.events = S.events.filter(x=>x.id!==eventId); // 로컬 → 공유로 전환
     closeSheet(); commit();
-  }).catch(err=>alert('공유 실패: '+err.message));
+  }).catch(err=>appAlert(err.message, '공유 실패'));
 }
 function shComment(id){
   const el = document.getElementById('cm-'+id);
   const v = el.value.trim(); if(!v) return;
   FB.shareComment(id, v).then(()=>{ el.value=''; })
-    .catch(err=>alert('댓글 실패: '+err.message));
+    .catch(err=>appAlert(err.message, '댓글 실패'));
 }
 function shDelMember(id, enc){
   const em = decodeURIComponent(enc);
-  if(!confirm(em+' 님을 공유에서 제외할까요?')) return;
-  FB.shareRemoveMember(id, em).catch(err=>alert('실패: '+err.message));
+  appConfirm(em+' 님을 공유에서 제외할까요?', ()=>{
+    FB.shareRemoveMember(id, em).catch(err=>appAlert(err.message, '실패'));
+  }, {title:'멤버 제외', danger:true, yes:'제외'});
 }
 function shDelete(id){
-  if(!confirm('공유 일정을 삭제할까요? 모든 참여자에게서 사라집니다.')) return;
-  FB.shareDelete(id).catch(err=>alert('삭제 실패: '+err.message));
+  appConfirm('공유 일정을 삭제할까요?\n모든 참여자에게서 사라집니다.', ()=>{
+    FB.shareDelete(id).catch(err=>appAlert(err.message, '삭제 실패'));
+  }, {title:'공유 일정 삭제', danger:true, yes:'삭제'});
 }
 function toggleCk(eid,iid){ const e=S.events.find(e=>e.id===eid); const it=e.items.find(i=>i.id===iid); it.done=!it.done; commit(); }
 function addCk(eid,text){ S.events.find(e=>e.id===eid).items.push({id:uid(),text,done:false}); commit(); }
@@ -729,38 +1031,70 @@ function delNote(kind,id,nid){
   if(kind==='mm') renderEditorNotes();
 }
 
-function openAddEvent(){
-  let type='allday', color=PALETTE[0];
+function openAddEvent(){ openEventSheet(null); }
+function openEventSheet(editId){
+  const orig = editId ? S.events.find(x=>x.id===editId) : null;
+  let type = orig ? orig.type : 'allday';
+  let color = (orig && orig.color) || PALETTE[0];
+  let repeat = (orig && orig.repeat) || 'none';
   const html = () => `
-    <h3>${selDate.replaceAll('-','. ')} 일정 추가</h3>
+    <h3>${orig ? '일정 수정' : selDate.replaceAll('-','. ')+' 일정 추가'}</h3>
+    <input type="date" id="ae-date" value="${orig ? orig.date : selDate}" style="margin-bottom:10px">
     <div class="chips">${Object.entries(TYPES).map(([k,[l]])=>
       `<button class="chip ${type===k?'on':''}" onclick="window._setType('${k}')">${l}</button>`).join('')}</div>
-    <input id="ae-title" placeholder="제목" style="margin-bottom:10px">
+    <input id="ae-title" placeholder="제목" value="${orig ? esc(orig.title) : ''}" style="margin-bottom:10px">
     <div class="row" id="ae-times" style="display:${type==='timed'?'flex':'none'};margin-bottom:10px">
-      <input type="time" id="ae-start" value="09:00">
-      <input type="time" id="ae-end" value="10:00">
+      <input type="time" id="ae-start" value="${orig && orig.start ? orig.start : '09:00'}">
+      <input type="time" id="ae-end" value="${orig && orig.end ? orig.end : '10:00'}">
     </div>
+    <div class="sub" style="margin-bottom:4px">반복</div>
+    <div class="chips">${Object.entries(REPEAT_LABEL).map(([k,l])=>
+      `<button class="chip ${repeat===k?'on':''}" onclick="window._setRepeat('${k}')">${l}</button>`).join('')}</div>
     <div class="sub" style="margin-bottom:4px">색상</div>
-    <div class="swatches">${PALETTE.map(c=>
-      `<button class="sw ${color===c?'on':''}" style="background:${c}" onclick="window._setColor('${c}')"></button>`).join('')}</div>
-    <button class="btn" onclick="window._submitEvent()">추가</button>`;
+    <div class="swatches">${(color && !PALETTE.includes(color)) ?
+        `<button class="sw on" style="background:${color}"></button>` : ''}${PALETTE.map(c=>
+      `<button class="sw ${color===c?'on':''}" style="background:${c}" onclick="window._setColor('${c}')"></button>`).join('')}<button class="sw rainbow" title="직접 선택" onclick="window._pickColor()"></button></div>
+    <button class="btn" onclick="window._submitEvent()">${orig ? '저장' : '추가'}</button>`;
   const keep = fn => {
     const ti=document.getElementById('ae-title').value;
+    const dt=document.getElementById('ae-date').value;
     const s=document.getElementById('ae-start').value, en=document.getElementById('ae-end').value;
     fn(); openSheetHTML(html());
     document.getElementById('ae-title').value=ti;
+    document.getElementById('ae-date').value=dt;
     document.getElementById('ae-start').value=s;
     document.getElementById('ae-end').value=en;
   };
   window._setType = t => keep(()=>type=t);
   window._setColor = c => keep(()=>color=c);
+  window._setRepeat = r => keep(()=>repeat=r);
+  window._pickColor = () => {
+    const ti=document.getElementById('ae-title').value, dt=document.getElementById('ae-date').value;
+    const s=document.getElementById('ae-start').value, en=document.getElementById('ae-end').value;
+    openColorWheel(color, c=>{
+      color=c; openSheetHTML(html());
+      document.getElementById('ae-title').value=ti; document.getElementById('ae-date').value=dt;
+      document.getElementById('ae-start').value=s; document.getElementById('ae-end').value=en;
+    });
+  };
   window._submitEvent = () => {
     const title = document.getElementById('ae-title').value.trim();
+    const date = document.getElementById('ae-date').value || selDate;
     if(!title) return;
-    const ev = {id:uid(),date:selDate,type,title,color};
-    if(type==='timed'){ ev.start=document.getElementById('ae-start').value; ev.end=document.getElementById('ae-end').value; }
-    if(type==='checklist') ev.items=[];
-    S.events.push(ev); closeSheet(); commit();
+    if(orig){
+      orig.title = title; orig.date = date; orig.type = type; orig.color = color;
+      orig.repeat = repeat==='none' ? undefined : repeat;
+      if(type==='timed'){ orig.start=document.getElementById('ae-start').value; orig.end=document.getElementById('ae-end').value; }
+      if(type==='checklist' && !orig.items) orig.items = [];
+    } else {
+      const ev = {id:uid(), date, type, title, color};
+      if(repeat!=='none') ev.repeat = repeat;
+      if(type==='timed'){ ev.start=document.getElementById('ae-start').value; ev.end=document.getElementById('ae-end').value; }
+      if(type==='checklist') ev.items=[];
+      S.events.push(ev);
+    }
+    selDate = date;
+    closeSheet(); commit();
   };
   openSheetHTML(html());
   document.getElementById('ae-title').focus();
@@ -801,6 +1135,7 @@ function renderTodo(){
         <span class="t ${t.done?'done':''}">${esc(t.title)}</span>
         ${folder}
         ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
+        <button class="x" onclick="openEditTodo('${t.id}')">✎</button>
         <button class="x" onclick="delTodo('${t.id}')">✕</button>
       </div>
       ${notesHTML('td', t)}
@@ -829,8 +1164,10 @@ function manageFolder(kind, id){
   openSheetHTML(`<h3>폴더: ${esc(f.name)}</h3>
     <p class="sub" style="margin:0 0 10px">포함된 항목 ${cnt}개</p>
     <div class="sub" style="margin-bottom:4px">폴더 색상</div>
-    <div class="swatches">${PALETTE.map(c=>
-      `<button class="sw ${(f.color||'')===c?'on':''}" style="background:${c}" onclick="setFolderColor('${kind}','${id}','${c}')"></button>`).join('')}</div>
+    <div class="swatches">${(f.color && !PALETTE.includes(f.color)) ?
+        `<button class="sw on" style="background:${f.color}"></button>` : ''}${PALETTE.map(c=>
+      `<button class="sw ${(f.color||'')===c?'on':''}" style="background:${c}" onclick="setFolderColor('${kind}','${id}','${c}')"></button>`).join('')}<button class="sw rainbow" title="직접 선택"
+        onclick="openColorWheel('${f.color||''}', c=>setFolderColor('${kind}','${id}',c))"></button></div>
     <button class="btn" style="margin-bottom:8px" onclick="renameFolder('${kind}','${id}')">이름 변경</button>
     <button class="btn" style="background:var(--red)" onclick="deleteFolder('${kind}','${id}')">폴더 삭제</button>`);
 }
@@ -843,26 +1180,30 @@ function setFolderColor(kind, id, color){
 function renameFolder(kind, id){
   const arr = kind==='todo' ? S.todoFolders : S.memoFolders;
   const f = arr.find(x=>x.id===id); if(!f) return;
-  const name = prompt('새 폴더 이름', f.name);
-  if(name && name.trim()){ f.name = name.trim(); closeSheet(); commit(); }
+  appPrompt('새 이름을 입력하세요.', f.name, name=>{
+    if(name && name.trim()){ f.name = name.trim(); closeSheet(); commit(); }
+  }, {title:'폴더 이름 변경', yes:'저장'});
 }
 function deleteFolder(kind, id){
   if(kind==='todo'){
     const n = S.todos.filter(t=>t.folderId===id).length;
-    if(!confirm(`이 폴더와 포함된 할 일 ${n}개가 삭제됩니다. 계속할까요?`)) return;
+    appConfirm(`이 폴더와 포함된 할 일 ${n}개가 휴지통으로 이동합니다.`, ()=>{
     S.todos.filter(t=>t.folderId===id).forEach(t=>toTrash('td', t));
     S.todos = S.todos.filter(t=>t.folderId!==id);
     S.todoFolders = S.todoFolders.filter(f=>f.id!==id);
     if(todoFolder===id) todoFolder='ALL';
+    closeSheet(); commit();
+    }, {title:'폴더 삭제', danger:true, yes:'삭제'});
   } else {
     const n = S.memos.filter(m=>m.folderId===id).length;
-    if(!confirm(`이 폴더와 포함된 메모 ${n}개가 삭제됩니다. 계속할까요?`)) return;
+    appConfirm(`이 폴더와 포함된 메모 ${n}개가 휴지통으로 이동합니다.`, ()=>{
     S.memos.filter(m=>m.folderId===id).forEach(m=>toTrash('mm', m));
     S.memos = S.memos.filter(m=>m.folderId!==id);
     S.memoFolders = S.memoFolders.filter(f=>f.id!==id);
     if(memoFolder===id) memoFolder = S.memoFolders[0]?.id || null;
+    closeSheet(); commit();
+    }, {title:'폴더 삭제', danger:true, yes:'삭제'});
   }
-  closeSheet(); commit();
 }
 function delTodo(id){
   const t = S.todos.find(x=>x.id===id); if(!t) return;
@@ -870,9 +1211,41 @@ function delTodo(id){
   S.todos = S.todos.filter(x=>x.id!==id); commit();
 }
 function promptTodoFolder(){
-  const name = prompt('새 폴더 이름');
-  if(name && name.trim()){ const f={id:uid(),name:name.trim()}; S.todoFolders.push(f); todoFolder=f.id; commit(); }
+  appPrompt('폴더 이름을 입력하세요.', '', name=>{
+    if(name && name.trim()){ const f={id:uid(),name:name.trim()}; S.todoFolders.push(f); todoFolder=f.id; commit(); }
+  }, {title:'새 폴더', yes:'만들기'});
 }
+function openEditTodo(id){
+  const t = S.todos.find(x=>x.id===id); if(!t) return;
+  let pri = t.priority, fid = t.folderId;
+  const html = () => `
+    <h3>할 일 수정</h3>
+    <input id="et-title" placeholder="할 일 제목" value="${esc(t.title)}" style="margin-bottom:10px">
+    <div class="chips">${S.todoFolders.map(f=>
+      `<button class="chip ${fid===f.id?'on':''}" onclick="window._etFid('${f.id}')">${esc(f.name)}</button>`).join('')}</div>
+    <div class="chips">
+      <input type="date" id="et-due" value="${t.due||''}" style="width:auto;font-size:12px;padding:7px 10px">
+      ${Object.entries(PRI).map(([k,[l]])=>
+        `<button class="chip ${pri===k?'on':''}" onclick="window._etPri('${k}')">${l}</button>`).join('')}
+    </div>
+    <button class="btn" onclick="window._etSubmit()">저장</button>`;
+  const keep = fn => {
+    const ti=document.getElementById('et-title').value, d=document.getElementById('et-due').value;
+    fn(); openSheetHTML(html());
+    document.getElementById('et-title').value=ti; document.getElementById('et-due').value=d;
+  };
+  window._etFid = v => keep(()=>fid=v);
+  window._etPri = v => keep(()=>pri=v);
+  window._etSubmit = () => {
+    const title = document.getElementById('et-title').value.trim();
+    if(!title) return;
+    t.title = title; t.folderId = fid; t.priority = pri;
+    t.due = document.getElementById('et-due').value || '';
+    closeSheet(); commit();
+  };
+  openSheetHTML(html());
+}
+
 function openAddTodo(){
   let pri='mid', fid = todoFolder!=='ALL'? todoFolder : (S.todoFolders[0]?.id||null);
   const html = () => `
@@ -917,8 +1290,9 @@ function renderMemo(){
   return chips + (rows || `<div class="empty">메모가 없습니다.<br>＋ 버튼으로 새로 만드세요.</div>`);
 }
 function promptMemoFolder(){
-  const name = prompt('새 폴더 이름');
-  if(name && name.trim()){ const f={id:uid(),name:name.trim()}; S.memoFolders.push(f); memoFolder=f.id; commit(); }
+  appPrompt('폴더 이름을 입력하세요.', '', name=>{
+    if(name && name.trim()){ const f={id:uid(),name:name.trim()}; S.memoFolders.push(f); memoFolder=f.id; commit(); }
+  }, {title:'새 폴더', yes:'만들기'});
 }
 function addMemo(){
   const m = {id:uid(),folderId:memoFolder,title:'',body:'',pinned:false,updated:nowStr()};
@@ -956,11 +1330,12 @@ function togglePin(){
   document.getElementById('pin-btn').style.opacity = m.pinned? '1':'0.4';
 }
 function deleteMemo(){
-  if(!confirm('이 메모를 삭제할까요? (휴지통에 15일 보관됩니다)')) return;
-  const m = S.memos.find(x=>x.id===curMemoId);
-  if(m) toTrash('mm', m);
-  S.memos = S.memos.filter(x=>x.id!==curMemoId);
-  curMemoId = null; save(); closeEditor();
+  appConfirm('이 메모를 삭제할까요?\n휴지통에 15일간 보관됩니다.', ()=>{
+    const m = S.memos.find(x=>x.id===curMemoId);
+    if(m) toTrash('mm', m);
+    S.memos = S.memos.filter(x=>x.id!==curMemoId);
+    curMemoId = null; save(); closeEditor();
+  }, {title:'메모 삭제', danger:true, yes:'삭제'});
 }
 
 /* ---------- 검색 ---------- */
@@ -1245,7 +1620,7 @@ if (FIREBASE_CONFIG.apiKey) {
 
     FB.login = async () => {
       try { await signInWithPopup(auth, new GoogleAuthProvider()); closeSheet(); }
-      catch (e) { alert('로그인 실패: ' + e.message); }
+      catch (e) { window.appAlert ? appAlert(e.message, '로그인 실패') : alert(e.message); }
     };
     FB.logout = async () => { await signOut(auth); closeSheet(); };
   } catch (e) {

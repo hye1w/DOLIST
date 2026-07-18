@@ -7,6 +7,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>플래너</title>
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" type="image/png" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
 <style>
   :root{
     --bg:#F5F5F7; --panel:#EFEFF2; --card:#FFFFFF;
@@ -560,6 +563,11 @@ function openSheetHTML(html){
 function closeSheet(){ document.getElementById('sheet-bg').classList.remove('open'); }
 
 render();
+
+/* PWA: 서비스 워커 등록 (오프라인 실행 + 앱 설치 지원) */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
 </script>
 
 <!-- ================= Firebase 동기화 =================

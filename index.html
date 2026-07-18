@@ -173,6 +173,15 @@
   .cmt-h{display:flex; gap:6px; align-items:baseline; font-size:11px;}
   .cmt-h b{color:var(--text); font-size:12px;}
   .cmt-b{font-size:12.5px; color:var(--text); white-space:pre-wrap; word-break:break-word; line-height:1.5;}
+  /* 일괄 선택 */
+  .selring{width:20px; height:20px; border-radius:50%; border:2px solid var(--sub);
+    flex-shrink:0; display:inline-flex; align-items:center; justify-content:center;}
+  .selring.on{background:var(--blue); border-color:var(--blue);}
+  .selring.on::after{content:'✓'; color:#fff; font-size:11px; font-weight:700;}
+  .selbar{position:fixed; left:12px; right:12px; bottom:calc(64px + env(safe-area-inset-bottom,0px));
+    z-index:9; background:var(--card); border:1px solid var(--border); border-radius:16px;
+    box-shadow:0 10px 30px rgba(0,0,0,.28); display:flex; align-items:center; gap:6px;
+    padding:10px 12px; font-size:13px; color:var(--text);}
   /* 커스텀 다이얼로그 */
   .modal-bg{position:fixed; inset:0; background:rgba(0,0,0,.42); z-index:70;
     display:none; align-items:center; justify-content:center; padding:36px 28px;}
@@ -467,9 +476,43 @@ let selDate = todayKey();
 let todoFolder = 'ALL', todoFilter = 'all', todoSort = 'created';
 let memoFolder = 'mf1', curMemoId = null;
 let searchMode = false, searchQ = '';
+let selMode = false, selIds = new Set(), _selPool = [];
+
+/* ---------- 일괄 선택/삭제 ---------- */
+function enterSel(){ selMode = true; selIds = new Set(); render(); }
+function exitSel(){ selMode = false; selIds = new Set(); render(); }
+function toggleSel(id){ selIds.has(id) ? selIds.delete(id) : selIds.add(id); render(); }
+function selAllPool(){
+  if(selIds.size >= _selPool.length) selIds = new Set();      // 이미 전체면 해제
+  else _selPool.forEach(id=>selIds.add(id));
+  render();
+}
+function selBarHTML(kind){
+  return `<div class="selbar">
+    <b>${selIds.size}개 선택</b><span style="flex:1"></span>
+    <button class="chip" onclick="selAllPool()">${selIds.size>=_selPool.length && _selPool.length ? '전체해제' : '전체선택'}</button>
+    <button class="chip" style="background:var(--red);color:#fff" onclick="bulkDelete('${kind}')">삭제</button>
+    <button class="chip" onclick="exitSel()">취소</button>
+  </div>`;
+}
+function bulkDelete(kind){
+  if(!selIds.size){ appAlert('선택된 항목이 없습니다.'); return; }
+  appConfirm(`${selIds.size}개 항목을 휴지통으로 이동합니다.`, ()=>{
+    if(kind==='td'){
+      S.todos.filter(t=>selIds.has(t.id)).forEach(t=>toTrash('td', t));
+      S.todos = S.todos.filter(t=>!selIds.has(t.id));
+    } else {
+      S.memos.filter(m=>selIds.has(m.id)).forEach(m=>toTrash('mm', m));
+      S.memos = S.memos.filter(m=>!selIds.has(m.id));
+      if(curMemoId && selIds.has(curMemoId)) curMemoId = null;
+    }
+    selMode = false; selIds = new Set();
+    commit();
+  }, {title:'일괄 삭제', danger:true, yes:'삭제'});
+}
 
 /* ================= 네비게이션 ================= */
-function go(i){ tab=i; searchMode=false; render(); }
+function go(i){ tab=i; searchMode=false; selMode=false; selIds=new Set(); render(); }
 function onFab(){
   if(searchMode) return;
   if(tab===0) openAddEvent();
@@ -640,7 +683,7 @@ function render(){
   document.querySelectorAll('nav button').forEach((b,i)=>b.classList.toggle('on', i===tab && !searchMode));
   const title = searchMode ? '검색' : ['달력','To-do','메모'][tab];
   document.getElementById('page-title').textContent = title;
-  document.getElementById('fab').style.display = searchMode ? 'none' : 'flex';
+  document.getElementById('fab').style.display = (searchMode || selMode) ? 'none' : 'flex';
   const m = document.getElementById('main');
   if(searchMode){ m.innerHTML = renderSearch(); const si=document.getElementById('search-in'); if(si){ si.focus(); si.setSelectionRange(searchQ.length,searchQ.length);} return; }
   m.innerHTML = tab===0 ? renderCalendar() : tab===1 ? renderTodo() : renderMemo();
@@ -919,10 +962,12 @@ function openManual(){
   ${row('📁²','폴더 관리','선택된 칩 한 번 더 탭 → 이름 · 색상 · 삭제')}
   ${row('⚙','필터 · 정렬','전체/미완료/완료 · 생성/마감/우선순위순')}
   ${row('✎','수정','제목 · 폴더 · 마감일 · 우선순위')}
+  ${row('☑²','일괄 삭제','[선택] 탭 → 여러 개 체크 → 삭제')}
 
   <div class="sec">📝 메모</div>
   ${row('✍','자동 저장','입력 즉시 저장 · 📌 고정 · 폴더 관리는 칩 재탭')}
-  ${row('↳','하위 메모','일정 · 할 일 · 메모 어디든 부속 메모 추가')}
+  ${row('↳','하위 메모','일정 · 할 일 · 메모 어디든 부속 메모 추가 · 탭하면 수정')}
+  ${row('☑²','일괄 삭제','[선택] 칩 → 여러 개 체크 → 삭제')}
 
   <div class="sec">👤 계정</div>
   ${row('●','동기화 상태','회색 로컬 · 주황 전송 중 · 초록 완료')}
@@ -1164,6 +1209,8 @@ function renderTodo(){
       ${[['created','생성순'],['due','마감일순'],['priority','우선순위순']].map(([k,l])=>
         `<option value="${k}" ${todoSort===k?'selected':''}>${l}</option>`).join('')}
     </select>
+    <button class="chip ${selMode?'on':''}" style="margin-left:6px"
+      onclick="${selMode?'exitSel()':'enterSel()'}">선택</button>
   </div>`;
 
   let list = S.todos.filter(t=> todoFolder==='ALL'||t.folderId===todoFolder)
@@ -1177,6 +1224,19 @@ function renderTodo(){
     const over = t.due && !t.done && t.due < tk;
     const fObj = folders.find(f=>f.id===t.folderId);
     const folder = todoFolder==='ALL' ? `<span class="sub">${esc(fObj?.name||'')}</span>` : '';
+    if(selMode){
+      const on = selIds.has(t.id);
+      return `<div class="card" onclick="toggleSel('${t.id}')"
+        style="border-left:3px solid ${fObj?.color||'transparent'};${on?'background:var(--blue-soft);':''}cursor:pointer">
+        <div class="todo">
+          <span class="selring ${on?'on':''}"></span>
+          <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
+          <span class="t ${t.done?'done':''}">${esc(t.title)}</span>
+          ${folder}
+          ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
+        </div>
+      </div>`;
+    }
     return `<div class="card" style="border-left:3px solid ${fObj?.color||'transparent'}">
       <div class="todo">
         <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
@@ -1190,8 +1250,10 @@ function renderTodo(){
       ${notesHTML('td', t)}
     </div>`;
   }).join('');
+  _selPool = selMode ? list.map(t=>t.id) : [];
 
-  return chips + filters + (rows || `<div class="empty">표시할 할 일이 없습니다.</div>`);
+  return chips + filters + (rows || `<div class="empty">표시할 할 일이 없습니다.</div>`)
+    + (selMode ? selBarHTML('td') : '');
 }
 function toggleTodo(id){ const t=S.todos.find(t=>t.id===id); t.done=!t.done; commit(); }
 
@@ -1327,16 +1389,32 @@ function renderMemo(){
   const chips = `<div class="chips">
     ${S.memoFolders.map(f=>`<button class="chip ${memoFolder===f.id?'on':''}" onclick="selectMemoFolderChip('${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${esc(f.name)}</button>`).join('')}
     <button class="chip" onclick="promptMemoFolder()">＋ 폴더</button>
+    <button class="chip ${selMode?'on':''}" onclick="${selMode?'exitSel()':'enterSel()'}">선택</button>
   </div>`;
   const list = S.memos.filter(m=>m.folderId===memoFolder)
     .sort((a,b)=> (b.pinned?1:0)-(a.pinned?1:0) || b.updated.localeCompare(a.updated));
-  const rows = list.map(m=>`
-    <div class="card memo-item" onclick="openEditor('${m.id}')"
-      style="border-left:3px solid ${(S.memoFolders.find(f=>f.id===m.folderId)?.color)||'transparent'}">
+  const rows = list.map(m=>{
+    const bc = (S.memoFolders.find(f=>f.id===m.folderId)?.color)||'transparent';
+    if(selMode){
+      const on = selIds.has(m.id);
+      return `<div class="card memo-item" onclick="toggleSel('${m.id}')"
+        style="border-left:3px solid ${bc};${on?'background:var(--blue-soft);':''}">
+        <div class="row"><span class="selring ${on?'on':''}"></span>
+          <div style="flex:1;min-width:0">
+            <div class="ttl">${m.pinned?'📌 ':''}${esc(m.title||'제목 없음')}</div>
+            <div class="pv">${m.updated.slice(5,16)} · ${esc((m.body||'').split('\n')[0]||'내용 없음')}</div>
+          </div></div>
+      </div>`;
+    }
+    return `<div class="card memo-item" onclick="openEditor('${m.id}')"
+      style="border-left:3px solid ${bc}">
       <div class="ttl">${m.pinned?'📌 ':''}${esc(m.title||'제목 없음')}</div>
       <div class="pv">${m.updated.slice(5,16)}${(m.notes||[]).length?` · 하위 ${m.notes.length}`:''} · ${esc((m.body||'').split('\n')[0]||'내용 없음')}</div>
-    </div>`).join('');
-  return chips + (rows || `<div class="empty">메모가 없습니다.<br>＋ 버튼으로 새로 만드세요.</div>`);
+    </div>`;
+  }).join('');
+  _selPool = selMode ? list.map(m=>m.id) : _selPool;
+  return chips + (rows || `<div class="empty">메모가 없습니다.<br>＋ 버튼으로 새로 만드세요.</div>`)
+    + (selMode ? selBarHTML('mm') : '');
 }
 function promptMemoFolder(){
   appPrompt('폴더 이름을 입력하세요.', '', name=>{

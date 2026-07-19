@@ -284,7 +284,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v8.0';
+const APP_VERSION = 'v8.1';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -430,7 +430,8 @@ document.addEventListener('pointerdown', e=>{
   const chip = e.target.closest ? e.target.closest('.ev[data-evid]') : null;
   if(!chip) return;
   const id = chip.dataset.evid;
-  _drag = { id, x:e.clientX, y:e.clientY, active:false,
+  const fromCell = chip.closest('.cell[data-key], .wk-day[data-key]');
+  _drag = { id, from: fromCell ? fromCell.dataset.key : null, x:e.clientX, y:e.clientY, active:false,
     timer: setTimeout(()=>{
       if(!_drag) return;
       _drag.active = true;
@@ -458,7 +459,7 @@ document.addEventListener('pointermove', e=>{
 function _endDrag(e, doDrop){
   if(!_drag) return;
   clearTimeout(_drag.timer);
-  const wasActive = _drag.active, id = _drag.id;
+  const wasActive = _drag.active, id = _drag.id, from = _drag.from;
   _drag = null;
   const g = document.getElementById('drag-ghost'); if(g) g.remove();
   _clearDrop();
@@ -466,11 +467,45 @@ function _endDrag(e, doDrop){
     const cell = _cellAt(e.clientX, e.clientY);
     if(cell){
       const ev = S.events.find(x=>x.id===id);
-      if(ev && ev.date !== cell.dataset.key){
-        ev.date = cell.dataset.key; selDate = cell.dataset.key; commit();
+      const to = cell.dataset.key;
+      if(!ev || !to) return;
+      if(!normRepeat(ev)){
+        if(ev.date !== to){ ev.date = to; selDate = to; commit(); }
+      } else if(from && from !== to){
+        openMoveScopeSheet(id, from, to); // 반복 일정: 이동 범위 선택
       }
     }
   }
+}
+/* 반복 일정 드래그 이동: 이 일정만 / 모든 반복 */
+function openMoveScopeSheet(id, from, to){
+  const e = S.events.find(x=>x.id===id); if(!e) return;
+  openSheetHTML(`<h3>반복 일정 이동</h3>
+    <p class="sub" style="margin:0 0 12px">${esc(e.title)} · ${from.replaceAll('-','. ')} → ${to.replaceAll('-','. ')} · ${repeatLabel(e)}</p>
+    <button class="btn" style="margin-bottom:8px" onclick="moveOneOccur('${id}','${from}','${to}')">이 일정만 이동</button>
+    <button class="btn" onclick="moveAllOccur('${id}','${from}','${to}')">모든 반복 일정 이동</button>`);
+}
+function moveOneOccur(id, from, to){
+  const e = S.events.find(x=>x.id===id); if(!e) return;
+  (e.exDates = e.exDates||[]).push(from);           // 원 시리즈에서 제외
+  const ev = {id:uid(), date:to, type:e.type, title:e.title, color:e.color}; // 단일 일정으로 분리
+  if(e.type==='timed'){ ev.start=e.start; ev.end=e.end; }
+  if(e.type==='checklist') ev.items = (e.items||[]).map(it=>({...it}));
+  S.events.push(ev);
+  selDate = to; closeSheet(); commit();
+}
+function moveAllOccur(id, from, to){
+  const e = S.events.find(x=>x.id===id); if(!e) return;
+  const shift = k => { const d=new Date(k+'T00:00'); d.setDate(d.getDate()+delta); return keyOf(d.getFullYear(),d.getMonth(),d.getDate()); };
+  const delta = Math.round((new Date(to+'T00:00') - new Date(from+'T00:00'))/86400000);
+  e.date = shift(e.date);
+  if(typeof e.repeat === 'object' && e.repeat){
+    if(e.repeat.days && e.repeat.days.length)
+      e.repeat.days = [...new Set(e.repeat.days.map(x=>((x+delta)%7+7)%7))].sort((a,b)=>a-b);
+    if(e.repeat.until) e.repeat.until = shift(e.repeat.until);
+  }
+  if(e.exDates) e.exDates = e.exDates.map(shift);   // 제외 날짜도 함께 이동
+  selDate = to; closeSheet(); commit();
 }
 document.addEventListener('pointerup', e=>_endDrag(e, true));
 document.addEventListener('pointercancel', e=>_endDrag(e, false));
@@ -838,7 +873,7 @@ function dayItems(k){
 function chipHTML(e){
   const c = e._td ? PRI[e.priority][1] : evColor(e);
   const sh = e._sh ? '👥 ' : (e._gc ? 'Ⓖ ' : (e._td ? '☑ ' : ''));
-  const drag = (!e._sh && !e._gc && !e._td && (!e.repeat||e.repeat==='none')) ? ` data-evid="${e.id}"` : '';
+  const drag = (!e._sh && !e._gc && !e._td) ? ` data-evid="${e.id}"` : '';
   if(!e._td && e.type==='allday')
     return `<div class="ev"${drag} style="background:${c};color:#fff">${sh}${esc(e.title)}</div>`;
   const label = (!e._td && e.type==='timed' ? e.start+' ' : '') + e.title;
@@ -1093,7 +1128,7 @@ function openManual(){
   ${row('🔁','반복 개별 관리','반복 일정의 ✎ · ✕ → [이 일정만] 또는 [모든 반복] 선택')}
   ${row('월/주','보기 전환','월간 달력 ↔ 주간 목록')}
   ${row('✎','일정 수정','제목 · 날짜 · 시간 · 색상 · 반복 변경')}
-  ${row('👆','길게 눌러 이동','일정을 끌어서 다른 날짜로 (반복 제외)')}
+  ${row('👆','길게 눌러 이동','일정을 끌어서 다른 날짜로 · 반복은 [이 일정만/모든 반복] 선택 (공유·구글 제외)')}
   ${row('☑','마감 할 일','마감일 있는 할 일이 달력에 자동 표시')}
   ${row('🇰🇷','공휴일','한국 공휴일 자동 표시 · 대체공휴일 포함 (2025~2028 확정, 이후 고정일만)')}
   ${row('👥','공유','상대를 초대하면 서로 댓글 가능')}
@@ -1121,7 +1156,7 @@ function openManual(){
   ${row('👥','연락처','닉네임 등록 → 공유 시 탭으로 선택')}
   ${row('🗑','휴지통','삭제 항목 15일 보관 후 자동 삭제')}
   ${row('🌙','다크 모드','상단 버튼으로 전환')}
-  ${row('🔍','통합 검색','일정 · 할 일 · 메모 · 하위 메모 한 번에')}`);
+  ${row('🔍','통합 검색','일정 · 할 일 · 메모 · 하위 메모 한 번에 · 영역 필터(전체/달력/To-do/메모)')}`);
 }
 
 function openContacts(){
@@ -1707,11 +1742,14 @@ function deleteMemo(){
 }
 
 /* ---------- 검색 ---------- */
-function openSearch(){ searchMode=true; searchQ=''; render(); }
+function openSearch(){ searchMode=true; searchQ=''; searchScope='all'; render(); }
+let searchScope = 'all'; // 'all' | 'ev' | 'td' | 'mm'
 function renderSearch(){
   const q = searchQ.toLowerCase();
   let out = `<input id="search-in" placeholder="일정 · 할 일 · 메모 검색" value="${esc(searchQ)}"
       oninput="searchQ=this.value;refreshSearch()" style="margin:6px 0 4px">
+    <div class="chips">${[['all','전체'],['ev','달력'],['td','To-do'],['mm','메모']].map(([k,l])=>
+      `<button class="chip ${searchScope===k?'on':''}" onclick="searchScope='${k}';render()">${l}</button>`).join('')}</div>
     <div id="search-out">`;
   out += searchResultsHTML(q) + `</div>`;
   return out;
@@ -1722,9 +1760,10 @@ function refreshSearch(){
 function searchResultsHTML(q){
   if(!q.trim()) return `<div class="empty" style="margin-top:10px">검색어를 입력하세요.</div>`;
   const nt = x => (x.notes||[]).map(n=>n.text).join('\n');
-  const ev = S.events.filter(e=>(e.title+'\n'+nt(e)).toLowerCase().includes(q));
-  const td = S.todos.filter(t=>(t.title+'\n'+nt(t)).toLowerCase().includes(q));
-  const mm = S.memos.filter(m=>(m.title+'\n'+m.body+'\n'+nt(m)).toLowerCase().includes(q));
+  const sc = searchScope;
+  const ev = (sc==='all'||sc==='ev') ? S.events.filter(e=>(e.title+'\n'+nt(e)).toLowerCase().includes(q)) : [];
+  const td = (sc==='all'||sc==='td') ? S.todos.filter(t=>(t.title+'\n'+nt(t)).toLowerCase().includes(q)) : [];
+  const mm = (sc==='all'||sc==='mm') ? S.memos.filter(m=>(m.title+'\n'+m.body+'\n'+nt(m)).toLowerCase().includes(q)) : [];
   const total = ev.length+td.length+mm.length;
   if(!total) return `<div class="empty" style="margin-top:10px">결과가 없습니다.</div>`;
   let h = `<div class="sub" style="margin:6px 2px">${total}개 항목</div>`;

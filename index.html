@@ -66,6 +66,16 @@
   .chip.on{background:var(--text); color:var(--bg); font-weight:600;}
   .chips{display:flex; gap:6px; overflow-x:auto; padding:4px 0 10px; scrollbar-width:none;}
   .chips::-webkit-scrollbar{display:none;}
+  /* 구글 캘린더 계정 행 + 토글 스위치 */
+  .gc-acct{gap:8px; margin:6px 0; align-items:center;}
+  .gc-em{flex:1; font-size:12px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.35;}
+  .sw{position:relative; display:inline-block; width:38px; height:22px; flex-shrink:0;}
+  .sw input{position:absolute; opacity:0; width:0; height:0;}
+  .sw i{position:absolute; inset:0; border-radius:22px; background:var(--soft); transition:background .15s; border:1px solid var(--border);}
+  .sw i::after{content:''; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:16px;
+    background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:transform .15s;}
+  .sw input:checked + i{background:var(--green); border-color:var(--green);}
+  .sw input:checked + i::after{transform:translateX(16px);}
   .card{
     background:var(--card); border:1px solid var(--border); border-radius:14px;
     padding:12px; margin-bottom:8px;
@@ -284,7 +294,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v8.1';
+const APP_VERSION = 'v8.2';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -1005,7 +1015,7 @@ function dayDetailHTML(){
         <span class="dot" style="background:${e.color||'#34A853'}"></span>
         <b style="font-size:13px;flex:1">Ⓖ ${esc(e.title)}</b>
       </div>
-      <div class="sub" style="margin-left:16px">구글 캘린더${e.type==='timed'?` · ${e.start} – ${e.end}`:' · 종일'}</div>
+      <div class="sub" style="margin-left:16px">구글 캘린더${e._acc?` · ${esc(e._acc)}`:''}${e.type==='timed'?` · ${e.start} – ${e.end}`:' · 종일'}</div>
     </div>`;
   });
 
@@ -1048,19 +1058,55 @@ let sharedEvents = []; // Firestore 'shared' 컬렉션에서 실시간 수신
 window.setSharedEvents = list => { sharedEvents = list.map(e=>({...e, _sh:true})); render(); };
 const myEmail = () => (window.FB && FB.user && FB.user.email || '').toLowerCase();
 
-/* ---------- 구글 캘린더 (읽기 전용 연동) ---------- */
-let gcalEvents = [], gcalAt = null;
+/* ---------- 구글 캘린더 (읽기 전용 · 여러 계정) ---------- */
+const GCAL_COLORS = ['#34A853','#F09300','#8E24AA','#3949AB','#00897B','#D81B60'];
+let gcalAccts = []; // [{email, on, at, list:[...]}]
+let gcalEvents = []; // 표시용(켜진 계정만 합침) — 아래 gcalCompose()가 갱신
 try{
-  const c = JSON.parse(store.get('planner_gcal')||'null');
-  if(c && c.list){ gcalEvents = c.list; gcalAt = c.at; }
+  const c2 = JSON.parse(store.get('planner_gcal2')||'null');
+  if(c2 && Array.isArray(c2.accounts)) gcalAccts = c2.accounts;
 }catch(_){}
-window.setGcal = list => { gcalEvents = list; gcalAt = Date.now(); render(); };
-window.cacheGcal = list => store.set('planner_gcal', JSON.stringify({at:Date.now(), list}));
-function gcalRefresh(){
+function gcalAcctColor(email){
+  const i = gcalAccts.findIndex(a=>a.email===email);
+  return GCAL_COLORS[(i<0?0:i) % GCAL_COLORS.length];
+}
+function gcalCompose(){
+  gcalEvents = gcalAccts.filter(a=>a.on).flatMap(a=>
+    (a.list||[]).map(e=>({ ...e, color: gcalAcctColor(a.email), _acc: a.email })));
+}
+function gcalSave(){ store.set('planner_gcal2', JSON.stringify({accounts: gcalAccts})); }
+gcalCompose();
+window.setGcalAccount = (email, list) => {
+  const em = (email||'').toLowerCase();
+  const a = gcalAccts.find(x=>x.email===em);
+  if(a){ a.list = list; a.at = Date.now(); a.on = true; }
+  else gcalAccts.push({ email: em, on: true, at: Date.now(), list });
+  gcalSave(); gcalCompose(); render();
+};
+function gcalToggle(email){
+  const a = gcalAccts.find(x=>x.email===email); if(!a) return;
+  a.on = !a.on; gcalSave(); gcalCompose(); render(); openAccount();
+}
+function gcalRemove(email){
+  appConfirm(`${email}\n계정 연결을 해제할까요?\n달력에서 이 계정의 일정이 사라집니다.`, ()=>{
+    gcalAccts = gcalAccts.filter(a=>a.email!==email);
+    gcalSave(); gcalCompose(); render(); openAccount();
+  }, {title:'연결 해제', danger:true, yes:'해제'});
+}
+function gcalRefresh(email){ // email 없으면 새 계정 연결(계정 선택 팝업)
   if(!window.FB || !FB.ready){ appAlert('Firebase 설정 후 사용할 수 있습니다.'); return; }
-  FB.gcalLoad()
-    .then(n=>{ closeSheet(); appAlert(`구글 캘린더 일정 ${n}개를 불러왔습니다.\n삼성 캘린더도 구글 계정과 동기화되어 있다면 함께 표시됩니다.`, '불러오기 완료'); })
+  FB.gcalLoad(email||null)
+    .then(r=>{ openAccount(); appAlert(`${r.email}\n일정 ${r.count}개를 불러왔습니다.`, email?'새로고침 완료':'계정 연결 완료'); })
     .catch(err=>appAlert(err.message, '불러오기 실패'));
+}
+async function gcalRefreshAll(){
+  if(!window.FB || !FB.ready || !gcalAccts.length) return;
+  let ok=0, fail=0;
+  for(const a of [...gcalAccts]){
+    try{ await FB.gcalLoad(a.email); ok++; }catch(_){ fail++; }
+  }
+  openAccount();
+  appAlert(`계정 ${ok}개 새로고침 완료${fail?`\n실패 ${fail}개 (팝업이 닫혔거나 권한 취소)`:''}`, '전체 새로고침');
 }
 
 function sharedCardHTML(e){
@@ -1132,7 +1178,7 @@ function openManual(){
   ${row('☑','마감 할 일','마감일 있는 할 일이 달력에 자동 표시')}
   ${row('🇰🇷','공휴일','한국 공휴일 자동 표시 · 대체공휴일 포함 (2025~2028 확정, 이후 고정일만)')}
   ${row('👥','공유','상대를 초대하면 서로 댓글 가능')}
-  ${row('Ⓖ','구글 일정','계정 시트에서 불러오기 (읽기 전용)')}
+  ${row('Ⓖ','구글 일정','여러 구글 계정 연결 가능 · 계정별 색상으로 표시 (읽기 전용)')}
 
   <div class="sec">☑️ To-do</div>
   ${row('📁','폴더 이동','상단 칩 탭 · 폴더 없는 할 일은 [미지정]에 모임')}
@@ -1152,7 +1198,7 @@ function openManual(){
 
   <div class="sec">👤 계정</div>
   ${row('●','동기화 상태','회색 로컬 · 주황 전송 중 · 초록 완료')}
-  ${row('Ⓖ','캘린더 불러오기','구글(+연동된 삼성) 일정 표시')}
+  ${row('Ⓖ','캘린더 계정','＋로 여러 구글 계정 연결 · 스위치로 달력 표시 켜고 끄기 · 🔄 새로고침 · ✕ 해제')}
   ${row('👥','연락처','닉네임 등록 → 공유 시 탭으로 선택')}
   ${row('🗑','휴지통','삭제 항목 15일 보관 후 자동 삭제')}
   ${row('🌙','다크 모드','상단 버튼으로 전환')}
@@ -1807,14 +1853,26 @@ function openAccount(){
       <button class="btn" onclick="FB.login()">Google로 로그인</button>
       <p class="sub" style="margin-top:10px">본인 Firebase 프로젝트(무료)에만 저장되며 외부로 전송되지 않습니다.</p>`;
   } else {
-    const gc = gcalAt ? new Date(gcalAt) : null;
-    const gcTime = gc ? `${String(gc.getMonth()+1)}/${gc.getDate()} ${String(gc.getHours()).padStart(2,'0')}:${String(gc.getMinutes()).padStart(2,'0')}` : '없음';
+    const gcTimeOf = at => { if(!at) return '-'; const d=new Date(at);
+      return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
+    const accRows = gcalAccts.map(a=>`
+      <div class="row gc-acct">
+        <label class="sw"><input type="checkbox" ${a.on?'checked':''} onchange="gcalToggle('${a.email}')"><i></i></label>
+        <span class="dot" style="background:${gcalAcctColor(a.email)}"></span>
+        <span class="gc-em">${esc(a.email)}<br>
+          <span class="sub" style="font-size:10px">불러옴 ${gcTimeOf(a.at)} · ${(a.list||[]).length}개</span></span>
+        <button class="x" title="새로고침" onclick="gcalRefresh('${a.email}')">🔄</button>
+        <button class="x" title="연결 해제" onclick="gcalRemove('${a.email}')">✕</button>
+      </div>`).join('');
     inner = `
       <p style="font-size:13px;margin:0 0 4px"><b>${esc(fb.user.email||'')}</b></p>
       <p class="sub" style="margin:0 0 12px">마지막 동기화: <span id="acc-last">${fb.lastSync||'-'}</span></p>
-      <button class="btn" style="margin-bottom:8px" onclick="gcalRefresh()">Ⓖ 구글 캘린더 불러오기</button>
+      <div class="sec" style="margin:0 0 4px">Ⓖ 구글 캘린더</div>
+      ${accRows || '<p class="sub" style="margin:2px 0 8px">연결된 계정이 없습니다. 아래 버튼으로 연결하세요.</p>'}
+      <button class="btn" style="margin:6px 0 8px" onclick="gcalRefresh()">＋ 구글 계정 연결</button>
+      ${gcalAccts.length>1?`<button class="chip" style="margin-bottom:8px" onclick="gcalRefreshAll()">🔄 전체 새로고침</button>`:''}
       <p class="sub" style="margin:0 0 12px;font-size:11px">
-        마지막 불러오기: ${gcTime} · 지난달~2개월 뒤 일정을 읽어옵니다.<br>
+        지난달~2개월 뒤 일정을 읽어옵니다 · 스위치로 달력 표시를 켜고 끕니다.<br>
         삼성 캘린더는 삼성 캘린더 앱 설정에서 구글 계정을 연결하면 함께 표시됩니다.</p>
       <button class="btn" style="background:var(--soft);color:var(--text)" onclick="FB.logout()">로그아웃</button>`;
   }
@@ -1995,13 +2053,20 @@ if (FIREBASE_CONFIG.apiKey) {
     FB.shareRemoveMember = (id, email) => updateDoc(doc(db, 'shared', id), { members: arrayRemove(email) });
     FB.shareDelete = (id) => deleteDoc(doc(db, 'shared', id));
 
-    /* ----- 구글 캘린더 읽어오기 (Calendar API) ----- */
-    FB.gcalLoad = async () => {
+    /* ----- 구글 캘린더 읽어오기 (Calendar API · 여러 계정) -----
+       보조 Auth 인스턴스를 사용해 팝업에서 다른 구글 계정을 선택해도
+       앱 로그인(동기화 계정)은 그대로 유지됩니다. */
+    const gcalApp = initializeApp(FIREBASE_CONFIG, 'gcal-token');
+    const gcalAuth = getAuth(gcalApp);
+    FB.gcalLoad = async (emailHint) => {
       const provider = new GoogleAuthProvider();
       provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
-      const res = await signInWithPopup(auth, provider);
+      provider.setCustomParameters(emailHint ? { login_hint: emailHint } : { prompt: 'select_account' });
+      const res = await signInWithPopup(gcalAuth, provider);
       const cred = GoogleAuthProvider.credentialFromResult(res);
       const token = cred && cred.accessToken;
+      const email = (res.user && res.user.email || '').toLowerCase();
+      try { await signOut(gcalAuth); } catch (_) {}
       if (!token) throw new Error('액세스 토큰을 받지 못했습니다.');
       const now = new Date();
       const tMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
@@ -2024,12 +2089,11 @@ if (FIREBASE_CONFIG.apiKey) {
           title: it.summary || '(제목 없음)',
           start: allday ? '' : String(it.start.dateTime).slice(11, 16),
           end: allday ? '' : String(it.end && it.end.dateTime || '').slice(11, 16),
-          color: '#34A853', _gc: true
+          _gc: true
         };
       }).filter(e => e.date);
-      window.cacheGcal(list);
-      window.setGcal(list);
-      return list.length;
+      window.setGcalAccount(email, list);
+      return { email, count: list.length };
     };
 
     FB.login = async () => {

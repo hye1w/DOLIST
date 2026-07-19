@@ -44,7 +44,22 @@
     background:var(--soft); color:var(--text); font-size:16px;
     display:flex; align-items:center; justify-content:center;
   }
-  main{flex:1; overflow-y:auto; padding:0 16px 90px;}
+  main{flex:1; overflow-y:auto; padding:0 16px 90px; overscroll-behavior-y:contain;}
+  /* 당겨서 새로고침 (달력 탭) */
+  .ptr{
+    position:fixed; top:60px; left:50%; z-index:40;
+    transform:translate(-50%,-70px); transition:transform .18s ease;
+    display:flex; align-items:center; gap:7px; pointer-events:none;
+    background:var(--card); border:1px solid var(--border); border-radius:20px;
+    padding:8px 14px; font-size:12px; color:var(--sub);
+    box-shadow:0 4px 16px rgba(0,0,0,.12); white-space:nowrap;
+  }
+  .ptr-sp{
+    width:13px; height:13px; border-radius:50%; flex-shrink:0;
+    border:2px solid var(--border); border-top-color:var(--blue);
+    animation:ptrspin .7s linear infinite;
+  }
+  @keyframes ptrspin{to{transform:rotate(360deg)}}
   /* 하단 탭 */
   nav{
     position:fixed; left:0; right:0; bottom:0; z-index:10;
@@ -62,9 +77,12 @@
   .chip{
     display:inline-block; border:none; padding:6px 13px; border-radius:20px;
     background:var(--soft); color:var(--text); font-size:12px; font-family:inherit;
+    white-space:nowrap; /* 칩 안 글자는 항상 한 줄 */
   }
   .chip.on{background:var(--text); color:var(--bg); font-weight:600;}
   .chips{display:flex; gap:6px; overflow-x:auto; padding:4px 0 10px; scrollbar-width:none;}
+  .chips .chip{flex-shrink:0;} /* 칩이 눌려 찌그러지지 않도록 */
+  .chips.wrap{flex-wrap:wrap; overflow-x:visible;} /* 폴더 칩: 많으면 줄바꿈 */
   .chips::-webkit-scrollbar{display:none;}
   /* 구글 캘린더 계정 행 + 토글 스위치 */
   .gc-acct{gap:8px; margin:6px 0; align-items:center;}
@@ -251,6 +269,7 @@
 </header>
 
 <main id="main"></main>
+<div id="ptr" class="ptr"></div>
 
 <button class="fab" id="fab" onclick="onFab()">＋</button>
 
@@ -294,7 +313,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v8.3';
+const APP_VERSION = 'v8.5';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -1223,6 +1242,71 @@ async function gcalRefreshAll(){
   appAlert(`계정 ${ok}개 새로고침 완료${fail?`\n실패 ${fail}개 (팝업이 닫혔거나 권한 취소)`:''}`, '전체 새로고침');
 }
 
+/* ---------- 당겨서 새로고침 (달력 탭 · 구글 캘린더) ---------- */
+let _ptr = null, _ptrBusy = false;
+const PTR_READY = 42; // 이만큼 당기면 놓았을 때 새로고침
+function _ptrSet(html, y){
+  const p = document.getElementById('ptr'); if(!p) return;
+  p.innerHTML = html;
+  p.style.transform = `translate(-50%, ${y}px)`;
+}
+function _ptrHide(delay){
+  setTimeout(()=>{
+    const p = document.getElementById('ptr');
+    if(p) p.style.transform = 'translate(-50%, -70px)';
+  }, delay||0);
+}
+async function ptrRefresh(){
+  if(_ptrBusy) return; _ptrBusy = true;
+  try{
+    if(!window.FB || !FB.ready || !FB.user){
+      _ptrSet('구글 로그인 후 사용할 수 있습니다', 8); _ptrHide(1500); return;
+    }
+    if(!gcalAccts.length){
+      _ptrSet('연결된 구글 계정이 없습니다 · 👤에서 연결', 8); _ptrHide(1800); return;
+    }
+    _ptrSet('<span class="ptr-sp"></span>구글 캘린더 새로고침 중…', 8);
+    let ok=0, fail=0, n=0;
+    for(const a of [...gcalAccts]){
+      try{ const r = await FB.gcalLoad(a.email); ok++; n += r.count; }
+      catch(_){ fail++; }
+    }
+    if(S.gsync){ try{ await gsyncFlush(false); }catch(_){} } // 올리기 대기분도 함께 반영
+    _ptrSet(fail ? `새로고침 완료 ${ok} · 실패 ${fail}` : `✓ 일정 ${n}개 불러옴`, 8);
+    _ptrHide(1500);
+  } finally { _ptrBusy = false; }
+}
+(function(){
+  const m = document.getElementById('main'); if(!m) return;
+  m.addEventListener('touchstart', e=>{
+    if(tab!==0 || _ptrBusy) return;                     // 달력 탭에서만
+    if(m.scrollTop > 0) return;                          // 맨 위에서만
+    const t = e.target;
+    if(t && t.closest && t.closest('.ev[data-evid]')) return; // 일정 길게 눌러 이동과 충돌 방지
+    _ptr = { y0: e.touches[0].clientY, pull: 0 };
+  }, {passive:true});
+  m.addEventListener('touchmove', e=>{
+    if(!_ptr || _ptrBusy) return;
+    const d = e.touches[0].clientY - _ptr.y0;
+    if(d <= 0 || m.scrollTop > 0){
+      if(_ptr.pull > 0){ _ptr.pull = 0; _ptrHide(); }
+      return;
+    }
+    _ptr.pull = Math.min(70, d * 0.45);
+    _ptrSet(_ptr.pull >= PTR_READY
+      ? '⟳ 놓으면 구글 캘린더 새로고침'
+      : '↓ 당겨서 구글 캘린더 새로고침', _ptr.pull - 62);
+  }, {passive:true});
+  const end = ()=>{
+    if(!_ptr) return;
+    const go = _ptr.pull >= PTR_READY;
+    _ptr = null;
+    if(go) ptrRefresh(); else _ptrHide();
+  };
+  m.addEventListener('touchend', end);
+  m.addEventListener('touchcancel', ()=>{ _ptr = null; _ptrHide(); });
+})();
+
 function sharedCardHTML(e){
   const c = evColor(e);
   const isOwner = window.FB && FB.user && e.owner === FB.user.uid;
@@ -1293,9 +1377,10 @@ function openManual(){
   ${row('🇰🇷','공휴일','한국 공휴일 자동 표시 · 대체공휴일 포함 (2025~2028 확정, 이후 고정일만)')}
   ${row('👥','공유','상대를 초대하면 서로 댓글 가능')}
   ${row('Ⓖ','구글 일정','여러 구글 계정 연결 가능 · 계정별 색상으로 표시 (읽기 전용)')}
+  ${row('⟳','당겨서 새로고침','달력 화면 맨 위에서 아래로 당기면 연결된 구글 캘린더를 다시 불러옴')}
 
   <div class="sec">☑️ To-do</div>
-  ${row('📁','폴더 이동','상단 칩 탭 · 폴더 없는 할 일은 [미지정]에 모임')}
+  ${row('📁','폴더 이동','상단 칩 탭 · 폴더가 많으면 여러 줄로 표시 · 폴더 없는 할 일은 [미지정]에 모임')}
   ${row('📁²','폴더 관리','선택된 칩 한 번 더 탭 → 이름 · 색상 · 기본 폴더 · 삭제')}
   ${row('★','기본 폴더','지정 시 새 할 일이 자동으로 그 폴더에 · 미지정이면 [미지정]으로')}
   ${row('●','중요도 점','편집 버튼 옆 점 색상 = 높음(빨강) · 중간(주황) · 낮음(초록)')}
@@ -1614,7 +1699,7 @@ function openEventSheet(editId, scope){
 /* ---------- To-do ---------- */
 function renderTodo(){
   const folders = S.todoFolders;
-  const chips = `<div class="chips">
+  const chips = `<div class="chips wrap">
     <button class="chip ${todoFolder==='ALL'?'on':''}" onclick="todoFolder='ALL';render()">전체</button>
     ${folders.map(f=>`<button class="chip ${todoFolder===f.id?'on':''}" onclick="selectTodoFolderChip('${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${S.defTodoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')}
     <button class="chip ${todoFolder==='NONE'?'on':''}" onclick="todoFolder='NONE';render()">미지정</button>
@@ -1759,7 +1844,7 @@ function openEditTodo(id){
   const html = () => `
     <h3>할 일 수정</h3>
     <input id="et-title" placeholder="할 일 제목" value="${esc(t.title)}" style="margin-bottom:10px">
-    <div class="chips">${S.todoFolders.map(f=>
+    <div class="chips wrap">${S.todoFolders.map(f=>
       `<button class="chip ${fid===f.id?'on':''}" onclick="window._etFid('${f.id}')">${S.defTodoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')}
       <button class="chip ${fid===null?'on':''}" onclick="window._etFid(null)">미지정</button></div>
     <div class="chips" style="align-items:center">
@@ -1791,7 +1876,7 @@ function openAddTodo(){
   const html = () => `
     <h3>새 할 일</h3>
     <input id="at-title" placeholder="할 일 제목" style="margin-bottom:10px">
-    <div class="chips">${S.todoFolders.map(f=>
+    <div class="chips wrap">${S.todoFolders.map(f=>
       `<button class="chip ${fid===f.id?'on':''}" onclick="window._setFid('${f.id}')">${S.defTodoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')}
       <button class="chip ${fid===null?'on':''}" onclick="window._setFid(null)">미지정</button></div>
     <div class="chips" style="align-items:center">
@@ -1817,7 +1902,7 @@ function openAddTodo(){
 
 /* ---------- 메모 ---------- */
 function renderMemo(){
-  const chips = `<div class="chips">
+  const chips = `<div class="chips wrap">
     <button class="chip ${memoFolder==='ALL'?'on':''}" onclick="memoFolder='ALL';render()">전체</button>
     ${S.memoFolders.map(f=>`<button class="chip ${memoFolder===f.id?'on':''}" onclick="selectMemoFolderChip('${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${S.defMemoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')}
     <button class="chip ${memoFolder==='NONE'?'on':''}" onclick="memoFolder='NONE';render()">미지정</button>
@@ -2228,7 +2313,9 @@ if (FIREBASE_CONFIG.apiKey) {
       }
     };
 
-    FB.gcalLoad = async (emailHint) => {
+    /* 계정별 읽기 토큰 캐시(약 50분) — 당겨서 새로고침 등 반복 호출 시 팝업 최소화 */
+    const _rTok = {}; // email → { t, exp }
+    async function gcalReadAuth(emailHint) {
       const provider = new GoogleAuthProvider();
       provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
       provider.setCustomParameters(emailHint ? { login_hint: emailHint } : { prompt: 'select_account' });
@@ -2238,13 +2325,27 @@ if (FIREBASE_CONFIG.apiKey) {
       const email = (res.user && res.user.email || '').toLowerCase();
       try { await signOut(gcalAuth); } catch (_) {}
       if (!token) throw new Error('액세스 토큰을 받지 못했습니다.');
+      _rTok[email] = { t: token, exp: Date.now() + 50 * 60 * 1000 };
+      return { token, email };
+    }
+    FB.gcalLoad = async (emailHint) => {
+      const hint = (emailHint || '').toLowerCase();
+      let token = null, email = hint;
+      const cached = hint && _rTok[hint] && _rTok[hint].exp > Date.now();
+      if (cached) token = _rTok[hint].t;
+      else { const a = await gcalReadAuth(hint || null); token = a.token; email = a.email; }
       const now = new Date();
       const tMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
       const tMax = new Date(now.getFullYear(), now.getMonth() + 3, 1).toISOString();
       const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
         + `?timeMin=${encodeURIComponent(tMin)}&timeMax=${encodeURIComponent(tMax)}`
         + '&singleEvents=true&orderBy=startTime&maxResults=250';
-      const r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+      let r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+      if ((r.status === 401 || r.status === 403) && cached) { // 캐시 토큰 만료 → 팝업으로 1회 재시도
+        delete _rTok[hint];
+        const a = await gcalReadAuth(hint); token = a.token; email = a.email;
+        r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+      }
       if (!r.ok) {
         throw new Error('Calendar API ' + r.status
           + ' — Google Cloud 콘솔에서 "Google Calendar API" 사용 설정이 필요할 수 있습니다.');

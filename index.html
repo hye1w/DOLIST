@@ -294,7 +294,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v8.2';
+const APP_VERSION = 'v8.3';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -366,6 +366,7 @@ applyTheme();
 let S = load();
 S.trash = S.trash || [];
 S.contacts = S.contacts || [];  // 공유용 연락처 {id, nick, email}
+S.gdel = S.gdel || [];          // 구글 캘린더 삭제 대기열 (gcalId 목록)
 
 /* ---------- 휴지통 (15일 보관 후 자동 삭제) ---------- */
 const TRASH_DAYS = 15;
@@ -406,7 +407,7 @@ function restoreTrash(id){
     obj.folderId = null; // 폴더가 사라진 경우 [미지정]으로 복원
   };
   const ensureFolder = (folders) => ensureFolderFor(item, folders);
-  if(kind==='ev') S.events.push(item);
+  if(kind==='ev'){ delete item.gcalId; delete item.gdirty; gmark(item); S.events.push(item); } // 구글에는 새로 등록
   else if(kind==='td'){ ensureFolder(S.todoFolders); S.todos.push(item); }
   else if(kind==='mm'){ ensureFolder(S.memoFolders); S.memos.unshift(item); }
   else if(kind==='nt'){
@@ -480,7 +481,7 @@ function _endDrag(e, doDrop){
       const to = cell.dataset.key;
       if(!ev || !to) return;
       if(!normRepeat(ev)){
-        if(ev.date !== to){ ev.date = to; selDate = to; commit(); }
+        if(ev.date !== to){ ev.date = to; gmark(ev); selDate = to; commit(); }
       } else if(from && from !== to){
         openMoveScopeSheet(id, from, to); // 반복 일정: 이동 범위 선택
       }
@@ -502,6 +503,7 @@ function moveOneOccur(id, from, to){
   if(e.type==='timed'){ ev.start=e.start; ev.end=e.end; }
   if(e.type==='checklist') ev.items = (e.items||[]).map(it=>({...it}));
   S.events.push(ev);
+  gmark(e); gmark(ev);
   selDate = to; closeSheet(); commit();
 }
 function moveAllOccur(id, from, to){
@@ -515,6 +517,7 @@ function moveAllOccur(id, from, to){
     if(e.repeat.until) e.repeat.until = shift(e.repeat.until);
   }
   if(e.exDates) e.exDates = e.exDates.map(shift);   // 제외 날짜도 함께 이동
+  gmark(e);
   selDate = to; closeSheet(); commit();
 }
 document.addEventListener('pointerup', e=>_endDrag(e, true));
@@ -556,8 +559,118 @@ function save(){
   S.updatedAt = Date.now();
   store.set(KEY, JSON.stringify(S));
   if(window.pushSync) window.pushSync();   // 로그인 상태면 클라우드로 전송
+  if(S.gsync && window.FB && FB.user){     // 자동 연동 켜짐 → 잠시 후 구글 반영
+    clearTimeout(_gsTimer); _gsTimer = setTimeout(()=>gsyncFlush(false), 1500);
+  }
 }
 function commit(){ save(); render(); }
+
+/* ---------- 구글 캘린더 자동 연동 (내 계정 · 쓰기) ----------
+   S.gsync가 켜져 있으면 일정의 추가·수정·삭제를 로그인 계정의
+   구글 캘린더(기본 캘린더)에 반영. 실패분은 gdirty/S.gdel에 남겨
+   [지금 동기화]로 재시도. */
+let _gsTimer = null, _gsBusy = false;
+function gmark(e){ if(S.gsync && e) e.gdirty = true; }              // 반영 필요 표시
+function gdelq(e){ if(S.gsync && e && e.gcalId){ (S.gdel = S.gdel||[]).push(e.gcalId); delete e.gcalId; } }
+function gsyncPending(){ return S.events.filter(e=>e.gdirty).length + (S.gdel||[]).length; }
+function nextDayKey(k){ const d=new Date(k+'T00:00'); d.setDate(d.getDate()+1); return keyOf(d.getFullYear(),d.getMonth(),d.getDate()); }
+function rruleOf(e){
+  const r = normRepeat(e); if(!r) return null;
+  const F = {daily:'DAILY', weekly:'WEEKLY', monthly:'MONTHLY', yearly:'YEARLY'};
+  if(!F[r.freq]) return null;
+  const BYD = ['SU','MO','TU','WE','TH','FR','SA'];
+  const d0 = new Date(e.date+'T00:00');
+  let s = 'RRULE:FREQ=' + F[r.freq];
+  const iv = Math.max(1, r.interval||1);
+  if(iv > 1) s += ';INTERVAL=' + iv;
+  if(r.freq==='weekly'){
+    const days = (r.days && r.days.length) ? [...r.days].sort((a,b)=>a-b) : [d0.getDay()];
+    s += ';BYDAY=' + days.map(d=>BYD[d]).join(',');
+  }
+  if(r.freq==='monthly' && r.monthly==='nth')
+    s += ';BYDAY=' + Math.ceil(d0.getDate()/7) + BYD[d0.getDay()];
+  if(r.until){
+    if(e.type==='timed' && e.start){ // 시간 일정: UNTIL은 UTC 일시로 (그날 끝까지)
+      const u = new Date(r.until+'T23:59:59');
+      s += ';UNTIL=' + u.toISOString().replace(/[-:]/g,'').slice(0,15) + 'Z';
+    } else s += ';UNTIL=' + r.until.replaceAll('-','');
+  }
+  return s;
+}
+function gcalBody(e){
+  const tz = (Intl.DateTimeFormat && Intl.DateTimeFormat().resolvedOptions().timeZone) || 'Asia/Seoul';
+  let start, end;
+  if(e.type==='timed' && e.start){
+    start = { dateTime: `${e.date}T${e.start}:00`, timeZone: tz };
+    let ed = e.date, et = e.end;
+    if(!et || et <= e.start){ // 종료가 없거나 시작 이전이면 +1시간
+      const d = new Date(`${e.date}T${e.start}:00`); d.setHours(d.getHours()+1);
+      ed = keyOf(d.getFullYear(), d.getMonth(), d.getDate()); et = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    end = { dateTime: `${ed}T${et}:00`, timeZone: tz };
+  } else { // 종일·메모·체크형은 종일 일정으로
+    start = { date: e.date }; end = { date: nextDayKey(e.date) };
+  }
+  const body = { summary: e.title, start, end };
+  const rr = rruleOf(e), rec = [];
+  if(rr){
+    rec.push(rr);
+    const ex = e.exDates || [];
+    if(ex.length){
+      if(e.type==='timed' && e.start)
+        rec.push('EXDATE;TZID=' + tz + ':' + ex.map(k=>k.replaceAll('-','') + 'T' + e.start.replace(':','') + '00').join(','));
+      else rec.push('EXDATE;VALUE=DATE:' + ex.map(k=>k.replaceAll('-','')).join(','));
+    }
+  }
+  body.recurrence = rec; // 빈 배열 = 반복 없음(수정 시 반복 해제 반영)
+  return body;
+}
+async function gsyncFlush(interactive){
+  if(!S.gsync || !window.FB || !FB.user || !FB.gcalPush) return;
+  const dirty = S.events.filter(e=>e.gdirty);
+  const dels = [...(S.gdel||[])];
+  if(!dirty.length && !dels.length){
+    if(interactive) appAlert('반영할 변경이 없습니다.', '구글 캘린더 동기화');
+    return;
+  }
+  if(_gsBusy) return;
+  _gsBusy = true;
+  let ok = 0, fail = 0, authFail = false;
+  const isAuthErr = err => /auth\/|토큰|계정|popup/i.test(String(err && err.message || err));
+  try{
+    for(const gid of dels){
+      try{ await FB.gcalPush({method:'delete', gcalId:gid}); S.gdel = S.gdel.filter(x=>x!==gid); ok++; }
+      catch(err){ fail++; if(isAuthErr(err)){ authFail = true; break; } }
+    }
+    if(!authFail) for(const e of dirty){
+      try{
+        const body = gcalBody(e);
+        if(e.gcalId) e.gcalId = await FB.gcalPush({method:'patch', gcalId:e.gcalId, body});
+        else e.gcalId = await FB.gcalPush({method:'insert', body});
+        delete e.gdirty; ok++;
+      }catch(err){ fail++; if(isAuthErr(err)){ authFail = true; break; } }
+    }
+  } finally { _gsBusy = false; }
+  if(ok){ S.updatedAt = Date.now(); store.set(KEY, JSON.stringify(S)); if(window.pushSync) window.pushSync(); }
+  if(interactive){
+    openAccount();
+    appAlert(`구글 캘린더에 ${ok}건 반영${fail?`\n실패 ${fail}건 — [지금 동기화]로 다시 시도할 수 있습니다.`:''}${authFail?'\n(권한 팝업이 취소되었거나 차단됨)':''}`, '구글 캘린더 동기화');
+  }
+}
+function gsyncToggle(on){
+  if(on){
+    if(!window.FB || !FB.user){ appAlert('구글 로그인 후 사용할 수 있습니다.'); openAccount(); return; }
+    S.gsync = true; save(); openAccount();
+    appConfirm('지금 있는 일정도 모두 구글 캘린더에 올릴까요?\n\n[모두 올리기]를 누르지 않아도 앞으로의\n추가·수정·삭제는 자동으로 반영됩니다.', ()=>{
+      S.events.forEach(e=>{ e.gdirty = true; });
+      save(); gsyncFlush(true);
+    }, {title:'구글 캘린더 자동 연동', yes:'모두 올리기'});
+  } else {
+    S.gsync = false; save(); openAccount();
+    appAlert('자동 연동을 껐습니다.\n이미 올라간 일정은 구글 캘린더에 남아 있습니다.', '구글 캘린더');
+  }
+}
+
 /* 동기화 모듈에서 사용 */
 window.getState = () => S;
 window.replaceState = (s) => { S = s; store.set(KEY, JSON.stringify(S)); render(); };
@@ -1035,7 +1148,7 @@ function goToday(){ const n=new Date(); calY=n.getFullYear(); calM=n.getMonth();
 function delEvent(id){
   const e = S.events.find(x=>x.id===id); if(!e) return;
   if(!normRepeat(e)){
-    toTrash('ev', e); S.events = S.events.filter(x=>x.id!==id); commit(); return;
+    gdelq(e); toTrash('ev', e); S.events = S.events.filter(x=>x.id!==id); commit(); return;
   }
   openSheetHTML(`<h3>반복 일정 삭제</h3>
     <p class="sub" style="margin:0 0 12px">${esc(e.title)} · ${selDate.replaceAll('-','. ')} · ${repeatLabel(e)}</p>
@@ -1045,11 +1158,12 @@ function delEvent(id){
 function delOneOccur(id){
   const e = S.events.find(x=>x.id===id); if(!e) return;
   (e.exDates = e.exDates||[]).push(selDate);
+  gmark(e);
   closeSheet(); commit();
 }
 function delAllOccur(id){
   const e = S.events.find(x=>x.id===id); if(!e) return;
-  toTrash('ev', e); S.events = S.events.filter(x=>x.id!==id);
+  gdelq(e); toTrash('ev', e); S.events = S.events.filter(x=>x.id!==id);
   closeSheet(); commit();
 }
 
@@ -1199,6 +1313,7 @@ function openManual(){
   <div class="sec">👤 계정</div>
   ${row('●','동기화 상태','회색 로컬 · 주황 전송 중 · 초록 완료')}
   ${row('Ⓖ','캘린더 계정','＋로 여러 구글 계정 연결 · 스위치로 달력 표시 켜고 끄기 · 🔄 새로고침 · ✕ 해제')}
+  ${row('⤴','자동 연동','토글을 켜면 일정 추가·수정·삭제(반복 포함)가 내 구글 캘린더에 자동 반영 · 실패분은 [지금 동기화]로 재시도')}
   ${row('👥','연락처','닉네임 등록 → 공유 시 탭으로 선택')}
   ${row('🗑','휴지통','삭제 항목 15일 보관 후 자동 삭제')}
   ${row('🌙','다크 모드','상단 버튼으로 전환')}
@@ -1473,18 +1588,21 @@ function openEventSheet(editId, scope){
       if(type==='timed'){ ev.start = val('ae-start'); ev.end = val('ae-end'); }
       if(type==='checklist') ev.items = (orig.items||[]).map(it=>({...it}));
       S.events.push(ev);
+      gmark(orig); gmark(ev);
     } else if(orig){
       orig.title = title; orig.date = date; orig.type = type; orig.color = color;
       orig.repeat = rep;
       if(!rep) delete orig.exDates;
       if(type==='timed'){ orig.start = val('ae-start'); orig.end = val('ae-end'); }
       if(type==='checklist' && !orig.items) orig.items = [];
+      gmark(orig);
     } else {
       const ev = {id:uid(), date, type, title, color};
       if(rep) ev.repeat = rep;
       if(type==='timed'){ ev.start = val('ae-start'); ev.end = val('ae-end'); }
       if(type==='checklist') ev.items = [];
       S.events.push(ev);
+      gmark(ev);
     }
     selDate = date;
     closeSheet(); commit();
@@ -1868,6 +1986,12 @@ function openAccount(){
       <p style="font-size:13px;margin:0 0 4px"><b>${esc(fb.user.email||'')}</b></p>
       <p class="sub" style="margin:0 0 12px">마지막 동기화: <span id="acc-last">${fb.lastSync||'-'}</span></p>
       <div class="sec" style="margin:0 0 4px">Ⓖ 구글 캘린더</div>
+      <div class="row gc-acct" style="margin:2px 0 6px">
+        <label class="sw"><input type="checkbox" ${S.gsync?'checked':''} onchange="gsyncToggle(this.checked)"><i></i></label>
+        <span class="gc-em" style="white-space:normal;line-height:1.45">내 일정을 구글 캘린더에 자동 등록<br>
+          <span class="sub" style="font-size:10px">켜면 추가·수정·삭제가 ${esc(fb.user.email||'')} 캘린더에 반영됩니다</span></span>
+      </div>
+      ${S.gsync && gsyncPending() ? `<button class="chip" style="margin:0 0 8px" onclick="gsyncFlush(true)">⤴ 지금 동기화 (대기 ${gsyncPending()}건)</button>` : ''}
       ${accRows || '<p class="sub" style="margin:2px 0 8px">연결된 계정이 없습니다. 아래 버튼으로 연결하세요.</p>'}
       <button class="btn" style="margin:6px 0 8px" onclick="gcalRefresh()">＋ 구글 계정 연결</button>
       ${gcalAccts.length>1?`<button class="chip" style="margin-bottom:8px" onclick="gcalRefreshAll()">🔄 전체 새로고침</button>`:''}
@@ -2058,6 +2182,52 @@ if (FIREBASE_CONFIG.apiKey) {
        앱 로그인(동기화 계정)은 그대로 유지됩니다. */
     const gcalApp = initializeApp(FIREBASE_CONFIG, 'gcal-token');
     const gcalAuth = getAuth(gcalApp);
+
+    /* ----- 구글 캘린더 쓰기 (자동 연동용) -----
+       쓰기 토큰은 약 1시간 유효 → 50분 캐시. 만료 시 팝업이 잠깐 떴다
+       닫힐 수 있음(같은 계정이라 보통 자동 진행). */
+    let _gTok = null; // { t, exp }
+    FB.gcalToken = async () => {
+      if (_gTok && _gTok.exp > Date.now()) return _gTok.t;
+      const provider = new GoogleAuthProvider();
+      provider.addScope('https://www.googleapis.com/auth/calendar.events');
+      provider.setCustomParameters({ login_hint: (FB.user && FB.user.email) || '' });
+      const res = await signInWithPopup(gcalAuth, provider);
+      const cred = GoogleAuthProvider.credentialFromResult(res);
+      const email = (res.user && res.user.email || '').toLowerCase();
+      try { await signOut(gcalAuth); } catch (_) {}
+      if (!cred || !cred.accessToken) throw new Error('액세스 토큰을 받지 못했습니다.');
+      if (FB.user && email !== (FB.user.email || '').toLowerCase())
+        throw new Error(`앱 로그인 계정(${FB.user.email})을 선택해주세요.\n선택한 계정: ${email}`);
+      _gTok = { t: cred.accessToken, exp: Date.now() + 50 * 60 * 1000 };
+      return _gTok.t;
+    };
+    const GCAL_BASE = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+    FB.gcalPush = async (op) => {
+      const token = await FB.gcalToken();
+      const h = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+      const insert = async (b) => {
+        const body = { ...b };
+        if (body.recurrence && !body.recurrence.length) delete body.recurrence;
+        const r = await fetch(GCAL_BASE, { method: 'POST', headers: h, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error('구글 캘린더 등록 실패 (' + r.status + ')');
+        return (await r.json()).id;
+      };
+      if (op.method === 'insert') return insert(op.body);
+      if (op.method === 'patch') {
+        const r = await fetch(GCAL_BASE + '/' + encodeURIComponent(op.gcalId),
+          { method: 'PATCH', headers: h, body: JSON.stringify(op.body) });
+        if (r.status === 404 || r.status === 410) return insert(op.body); // 구글에서 지워졌으면 새로 등록
+        if (!r.ok) throw new Error('구글 캘린더 수정 실패 (' + r.status + ')');
+        return op.gcalId;
+      }
+      if (op.method === 'delete') {
+        const r = await fetch(GCAL_BASE + '/' + encodeURIComponent(op.gcalId), { method: 'DELETE', headers: h });
+        if (!r.ok && r.status !== 404 && r.status !== 410) throw new Error('구글 캘린더 삭제 실패 (' + r.status + ')');
+        return true;
+      }
+    };
+
     FB.gcalLoad = async (emailHint) => {
       const provider = new GoogleAuthProvider();
       provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
@@ -2080,7 +2250,10 @@ if (FIREBASE_CONFIG.apiKey) {
           + ' — Google Cloud 콘솔에서 "Google Calendar API" 사용 설정이 필요할 수 있습니다.');
       }
       const j = await r.json();
-      const list = (j.items || []).map(it => {
+      const own = new Set((window.getState().events || []).map(ev => ev.gcalId).filter(Boolean)); // 앱에서 올린 일정은 중복 표시 제외
+      const list = (j.items || []).filter(it =>
+        !own.has(it.id) && !(it.recurringEventId && own.has(it.recurringEventId))
+      ).map(it => {
         const allday = !!(it.start && it.start.date);
         const date = allday ? it.start.date : String(it.start && it.start.dateTime || '').slice(0, 10);
         return {

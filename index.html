@@ -126,6 +126,14 @@
     font-weight:600; line-height:18px;
   }
   .cell.today .d{background:var(--red); color:#fff;}
+  .cell:nth-child(7n+1):not(.today) .d{color:var(--red);}
+  .cell:nth-child(7n):not(.today) .d{color:var(--blue);}
+  .cell.hol:not(.today) .d{color:var(--red);}
+  .hname{font-size:8px; color:var(--red); font-weight:600; margin-left:2px;
+    display:inline-block; max-width:calc(100% - 23px); overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; vertical-align:top; line-height:18px;}
+  .wk-hol{font-size:10px; color:var(--red); font-weight:600; margin-right:6px;}
+  .wk-num.hol:not(.today){color:var(--red);}
   .ev{
     font-size:9px; font-weight:500; border-radius:4px; padding:0 3px; margin-top:1px;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
@@ -276,7 +284,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v7';
+const APP_VERSION = 'v7.8';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -294,6 +302,43 @@ const ICO_EDIT = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" st
   <path d="M12 4.5H6a2 2 0 0 0-2 2v11.5a2 2 0 0 0 2 2h11.5a2 2 0 0 0 2-2V12"/>
   <path d="M18.2 2.9a1.9 1.9 0 0 1 2.7 2.7L13 13.5l-3.6.9.9-3.6z"/></svg>`;
 const evColor = e => e.color || {allday:'#0A6CFF',timed:'#BF5AF2',memo:'#FF9F0A',checklist:'#28C840'}[e.type];
+
+/* ---------- 한국 공휴일 ----------
+   2025~2028년: 확정 공휴일 전체(음력 명절·대체공휴일·선거일 포함).
+   제헌절은 2026년부터 공휴일 재지정(대체공휴일 적용 대상).
+   그 외 연도: 날짜 고정 공휴일만 표시(음력 명절은 추후 업데이트). */
+const KR_HOLIDAYS = {
+  '2025-01-01':'신정','2025-01-27':'임시공휴일','2025-01-28':'설날 연휴','2025-01-29':'설날','2025-01-30':'설날 연휴',
+  '2025-03-01':'삼일절','2025-03-03':'대체공휴일','2025-05-05':'어린이날·부처님오신날','2025-05-06':'대체공휴일',
+  '2025-06-03':'대통령선거','2025-06-06':'현충일','2025-08-15':'광복절','2025-10-03':'개천절',
+  '2025-10-05':'추석 연휴','2025-10-06':'추석','2025-10-07':'추석 연휴','2025-10-08':'대체공휴일',
+  '2025-10-09':'한글날','2025-12-25':'성탄절',
+  '2026-01-01':'신정','2026-02-16':'설날 연휴','2026-02-17':'설날','2026-02-18':'설날 연휴',
+  '2026-03-01':'삼일절','2026-03-02':'대체공휴일','2026-05-05':'어린이날','2026-05-24':'부처님오신날','2026-05-25':'대체공휴일',
+  '2026-06-03':'지방선거','2026-06-06':'현충일','2026-07-17':'제헌절','2026-08-15':'광복절','2026-08-17':'대체공휴일',
+  '2026-09-24':'추석 연휴','2026-09-25':'추석','2026-09-26':'추석 연휴',
+  '2026-10-03':'개천절','2026-10-05':'대체공휴일','2026-10-09':'한글날','2026-12-25':'성탄절',
+  '2027-01-01':'신정','2027-02-06':'설날 연휴','2027-02-07':'설날','2027-02-08':'설날 연휴','2027-02-09':'대체공휴일',
+  '2027-03-01':'삼일절','2027-05-05':'어린이날','2027-05-13':'부처님오신날','2027-06-06':'현충일',
+  '2027-07-17':'제헌절','2027-07-19':'대체공휴일','2027-08-15':'광복절','2027-08-16':'대체공휴일',
+  '2027-09-14':'추석 연휴','2027-09-15':'추석','2027-09-16':'추석 연휴',
+  '2027-10-03':'개천절','2027-10-04':'대체공휴일','2027-10-09':'한글날','2027-10-11':'대체공휴일',
+  '2027-12-25':'성탄절','2027-12-27':'대체공휴일',
+  '2028-01-01':'신정','2028-01-26':'설날 연휴','2028-01-27':'설날','2028-01-28':'설날 연휴',
+  '2028-03-01':'삼일절','2028-04-12':'국회의원선거','2028-05-02':'부처님오신날','2028-05-05':'어린이날','2028-06-06':'현충일',
+  '2028-07-17':'제헌절','2028-08-15':'광복절',
+  '2028-10-02':'추석 연휴','2028-10-03':'추석·개천절','2028-10-04':'추석 연휴','2028-10-05':'대체공휴일',
+  '2028-10-09':'한글날','2028-12-25':'성탄절',
+};
+const KR_FIXED = {'01-01':'신정','03-01':'삼일절','05-05':'어린이날','06-06':'현충일','07-17':'제헌절','08-15':'광복절','10-03':'개천절','10-09':'한글날','12-25':'성탄절'};
+function holidayOf(k){
+  if(KR_HOLIDAYS[k] !== undefined) return KR_HOLIDAYS[k];
+  const y = +k.slice(0,4);
+  if(y >= 2025 && y <= 2028) return null; // 확정 표에 없는 날은 평일
+  const name = KR_FIXED[k.slice(5)];
+  if(name === '제헌절' && y < 2026) return null; // 2008~2025년 제헌절은 공휴일 아님
+  return name || null;
+}
 
 /* 테마 (다크모드) */
 let theme = store.get('planner_theme')
@@ -755,10 +800,11 @@ function monthGridHTML(){
     if(d===null){ grid += `<div class="cell"></div>`; return; }
     const k = keyOf(calY, calM, d);
     const items = dayItems(k);
-    const cls = `cell${k===tk?' today':''}${k===selDate?' sel':''}`;
+    const hol = holidayOf(k);
+    const cls = `cell${k===tk?' today':''}${k===selDate?' sel':''}${hol?' hol':''}`;
     let chips = items.slice(0,2).map(chipHTML).join('');
     if(items.length>2) chips += `<div class="more">+${items.length-2}</div>`;
-    grid += `<div class="${cls}" data-key="${k}" onclick="selDate='${k}';render()"><span class="d">${d}</span>${chips}</div>`;
+    grid += `<div class="${cls}" data-key="${k}" onclick="selDate='${k}';render()"><span class="d">${d}</span>${hol?`<span class="hname">${hol}</span>`:''}${chips}</div>`;
   });
   return `
     <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
@@ -784,12 +830,13 @@ function weekListHTML(){
   return `<div class="wk">` + weekDays().map((k,i)=>{
     const items = dayItems(k);
     const isToday = k===tk, isSel = k===selDate;
+    const hol = holidayOf(k);
     return `<div class="wk-day ${isSel?'sel':''}" data-key="${k}" onclick="selDate='${k}';render()">
       <div class="wk-h">
-        <span class="wk-dow" style="color:${i===0?'var(--red)':i===6?'var(--blue)':'var(--sub)'}">${names[i]}</span>
-        <span class="wk-num ${isToday?'today':''}">${+k.slice(8,10)}</span>
+        <span class="wk-dow" style="color:${(i===0||hol)?'var(--red)':i===6?'var(--blue)':'var(--sub)'}">${names[i]}</span>
+        <span class="wk-num ${isToday?'today':''}${hol?' hol':''}">${+k.slice(8,10)}</span>
       </div>
-      <div class="wk-evs">${items.map(chipHTML).join('') || '<span class="sub" style="font-size:10px">—</span>'}</div>
+      <div class="wk-evs">${hol?`<span class="wk-hol">${hol}</span>`:''}${items.map(chipHTML).join('') || (hol?'':'<span class="sub" style="font-size:10px">—</span>')}</div>
     </div>`;
   }).join('') + `</div>`;
 }
@@ -853,7 +900,8 @@ function dayDetailHTML(){
     </div>`;
   });
 
-  return `<div class="day-title"><b>${selDate.replaceAll('-','. ')}</b><span class="sub">일정 ${totalDay}개</span></div>` + detail;
+  const selHol = holidayOf(selDate);
+  return `<div class="day-title"><b>${selDate.replaceAll('-','. ')}</b>${selHol?`<span class="wk-hol">${selHol}</span>`:''}<span class="sub">일정 ${totalDay}개</span></div>` + detail;
 }
 
 function navCal(delta){
@@ -959,6 +1007,7 @@ function openManual(){
   ${row('✎','일정 수정','제목 · 날짜 · 시간 · 색상 · 반복 변경')}
   ${row('👆','길게 눌러 이동','일정을 끌어서 다른 날짜로 (반복 제외)')}
   ${row('☑','마감 할 일','마감일 있는 할 일이 달력에 자동 표시')}
+  ${row('🇰🇷','공휴일','한국 공휴일 자동 표시 · 대체공휴일 포함 (2025~2028 확정, 이후 고정일만)')}
   ${row('👥','공유','상대를 초대하면 서로 댓글 가능')}
   ${row('Ⓖ','구글 일정','계정 시트에서 불러오기 (읽기 전용)')}
 

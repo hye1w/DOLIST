@@ -284,7 +284,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v7.8';
+const APP_VERSION = 'v8.0';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -392,20 +392,18 @@ function restoreTrash(id){
   const i = S.trash.findIndex(t=>t.id===id); if(i<0) return;
   const {kind, item} = S.trash[i];
   const ensureFolderFor = (obj, folders) => {
-    if(folders.find(f=>f.id===obj.folderId)) return;
-    let rf = folders.find(f=>f.name==='복원됨');
-    if(!rf){ rf = {id:uid(), name:'복원됨'}; folders.push(rf); }
-    obj.folderId = rf.id;
+    if(obj.folderId && folders.find(f=>f.id===obj.folderId)) return;
+    obj.folderId = null; // 폴더가 사라진 경우 [미지정]으로 복원
   };
   const ensureFolder = (folders) => ensureFolderFor(item, folders);
   if(kind==='ev') S.events.push(item);
   else if(kind==='td'){ ensureFolder(S.todoFolders); S.todos.push(item); }
-  else if(kind==='mm'){ ensureFolder(S.memoFolders); S.memos.unshift(item); if(!memoFolder) memoFolder=item.folderId; }
+  else if(kind==='mm'){ ensureFolder(S.memoFolders); S.memos.unshift(item); }
   else if(kind==='nt'){
     const p = findParent(item.pKind, item.pId);
     if(p){ (p.notes = p.notes||[]).push(item.note); }
     else { // 부모가 삭제된 경우 → 메모로 복원
-      const m = {id:uid(), folderId:'', title:item.note.text, body:'(하위 메모에서 복원됨)', pinned:false, updated:nowStr()};
+      const m = {id:uid(), folderId:null, title:item.note.text, body:'(하위 메모에서 복원됨)', pinned:false, updated:nowStr()};
       ensureFolderFor(m, S.memoFolders); S.memos.unshift(m);
     }
   }
@@ -503,6 +501,7 @@ function load(){
       {id:uid(),folderId:'tf2',title:'운동 등록',done:false,due:'',priority:'mid',created:3},
     ],
     memoFolders:[{id:'mf1',name:'앱 개발'},{id:'mf2',name:'아이디어'}],
+    defTodoFolder:null, defMemoFolder:null,
     memos:[
       {id:'m1',folderId:'mf1',title:'동기화 정책',body:'오프라인 우선 저장 → 온라인 시 병합.\n충돌 시 최신 수정본 우선.',pinned:true,updated:nowStr()},
     ],
@@ -524,7 +523,19 @@ let calY, calM;
 { const n=new Date(); calY=n.getFullYear(); calM=n.getMonth(); }
 let selDate = todayKey();
 let todoFolder = 'ALL', todoFilter = 'all', todoSort = 'created';
-let memoFolder = 'mf1', curMemoId = null;
+let memoFolder = 'ALL', curMemoId = null;
+
+/* ---------- 폴더 유틸 (미지정 · 기본 폴더) ---------- */
+const _folderArr = kind => kind==='todo' ? S.todoFolders : S.memoFolders;
+const validFid = (kind, fid) => (fid && _folderArr(kind).some(f=>f.id===fid)) ? fid : null;
+const isNoneFid = (kind, fid) => validFid(kind, fid) === null;
+const defFid = kind => validFid(kind, kind==='todo' ? S.defTodoFolder : S.defMemoFolder);
+/* 새 항목의 폴더: 실제 폴더 보기 중이면 그 폴더 / [미지정] 보기 중이면 미지정 / 그 외(전체)는 기본 폴더 또는 미지정 */
+function newItemFid(kind, cur){
+  if(cur==='NONE') return null;
+  if(cur!=='ALL' && validFid(kind, cur)) return cur;
+  return defFid(kind);
+}
 let searchMode = false, searchQ = '';
 let selMode = false, selIds = new Set(), _selPool = [];
 
@@ -741,15 +752,77 @@ function render(){
 }
 
 /* ---------- 달력 ---------- */
-/* ---------- 반복 일정 ---------- */
-const REPEAT_LABEL = {none:'없음', daily:'매일', weekly:'매주', monthly:'매월'};
+/* ---------- 반복 일정 (구글 캘린더식) ----------
+   repeat: 'daily'|'weekly'|'monthly' (구버전 문자열, 자동 호환) 또는
+   {freq:'daily|weekly|monthly|yearly', interval:N, days:[요일], monthly:'date|nth', until:'YYYY-MM-DD', count:N}
+   exDates: 개별 삭제/분리된 발생 날짜 목록 */
+const DOW_KO = ['일','월','화','수','목','금','토'];
+const NTH_KO = ['첫째','둘째','셋째','넷째','다섯째'];
+function normRepeat(e){
+  const r = e.repeat;
+  if(!r || r==='none') return null;
+  if(typeof r === 'string') return {freq:r, interval:1, days:null, monthly:'date', until:null, count:null};
+  return r;
+}
 function occursOn(e, k){
-  if(!e.repeat || e.repeat==='none') return e.date===k;
+  const r = normRepeat(e);
+  if(!r) return e.date===k;
   if(k < e.date) return false;
-  if(e.repeat==='daily') return true;
-  if(e.repeat==='weekly') return new Date(k+'T00:00').getDay() === new Date(e.date+'T00:00').getDay();
-  if(e.repeat==='monthly') return k.slice(8,10) === e.date.slice(8,10);
+  if(r.until && k > r.until) return false;
+  if((e.exDates||[]).includes(k)) return false;
+  const d0 = new Date(e.date+'T00:00'), d1 = new Date(k+'T00:00');
+  const iv = Math.max(1, r.interval||1);
+  if(r.freq==='daily'){
+    return Math.round((d1-d0)/86400000) % iv === 0;
+  }
+  if(r.freq==='weekly'){
+    const days = (r.days && r.days.length) ? r.days : [d0.getDay()];
+    if(!days.includes(d1.getDay())) return false;
+    const sow = d => { const x=new Date(d); x.setDate(x.getDate()-x.getDay()); return x; };
+    return Math.round((sow(d1)-sow(d0))/604800000) % iv === 0;
+  }
+  if(r.freq==='monthly'){
+    const dm = (d1.getFullYear()-d0.getFullYear())*12 + (d1.getMonth()-d0.getMonth());
+    if(dm % iv !== 0) return false;
+    if(r.monthly==='nth')
+      return d1.getDay()===d0.getDay() && Math.ceil(d1.getDate()/7)===Math.ceil(d0.getDate()/7);
+    return d1.getDate()===d0.getDate();
+  }
+  if(r.freq==='yearly'){
+    return (d1.getFullYear()-d0.getFullYear()) % iv === 0
+      && d1.getMonth()===d0.getMonth() && d1.getDate()===d0.getDate();
+  }
   return e.date===k;
+}
+function repeatLabel(e){
+  const r = normRepeat(e); if(!r) return '';
+  const iv = Math.max(1, r.interval||1);
+  const d0 = new Date(e.date+'T00:00');
+  let s;
+  if(r.freq==='daily') s = iv>1 ? `${iv}일마다` : '매일';
+  else if(r.freq==='weekly'){
+    const days = (r.days && r.days.length) ? [...r.days].sort((a,b)=>a-b) : [d0.getDay()];
+    s = (iv>1 ? `${iv}주마다 ` : '매주 ') + days.map(d=>DOW_KO[d]).join('·');
+  }
+  else if(r.freq==='monthly')
+    s = (iv>1 ? `${iv}개월마다 ` : '매월 ') + (r.monthly==='nth'
+      ? `${NTH_KO[Math.ceil(d0.getDate()/7)-1]} ${DOW_KO[d0.getDay()]}요일` : `${d0.getDate()}일`);
+  else if(r.freq==='yearly') s = iv>1 ? `${iv}년마다` : '매년';
+  else s = '반복';
+  if(r.count) s += ` · ${r.count}회`;
+  else if(r.until) s += ` · ${r.until.replaceAll('-','.')}까지`;
+  return s;
+}
+/* 횟수 종료 → 마지막 발생일 계산 (RRULE COUNT 방식: 개별 삭제와 무관하게 계산) */
+function untilFromCount(date, rep, count){
+  const probe = {date, repeat:{...rep, until:undefined, count:undefined}};
+  let found = 0; const d = new Date(date+'T00:00');
+  for(let g=0; g<60000; g++){
+    const key = keyOf(d.getFullYear(), d.getMonth(), d.getDate());
+    if(occursOn(probe, key) && ++found >= count) return key;
+    d.setDate(d.getDate()+1);
+  }
+  return null;
 }
 let calView = 'month'; // 'month' | 'week'
 
@@ -852,7 +925,8 @@ function dayDetailHTML(){
 
   dayEvs.forEach(e=>{
     const label = TYPES[e.type][0], c = evColor(e);
-    const rep = (e.repeat && e.repeat!=='none') ? ` · ${REPEAT_LABEL[e.repeat]} 반복` : '';
+    const rl = repeatLabel(e);
+    const rep = rl ? ` · ${rl} 반복` : '';
     let extra = '';
     if(e.type==='checklist'){
       extra = (e.items||[]).map(it=>`
@@ -883,7 +957,7 @@ function dayDetailHTML(){
         <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
         <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
         <span class="t ${t.done?'done':''}">☑ ${esc(t.title)}</span>
-        <span class="sub">${esc(fObj?.name||'')}</span>
+        <span class="sub">${esc(fObj?.name||'미지정')}</span>
         <button class="x" onclick="openEditTodo('${t.id}')">${ICO_EDIT}</button>
       </div>
     </div>`;
@@ -915,10 +989,23 @@ function moveMonth(d){ calM+=d; if(calM<0){calM=11;calY--;} if(calM>11){calM=0;c
 function goToday(){ const n=new Date(); calY=n.getFullYear(); calM=n.getMonth(); selDate=todayKey(); render(); }
 function delEvent(id){
   const e = S.events.find(x=>x.id===id); if(!e) return;
-  const doDel = ()=>{ toTrash('ev', e); S.events = S.events.filter(x=>x.id!==id); commit(); };
-  if(e.repeat && e.repeat!=='none')
-    appConfirm('반복 일정입니다. 모든 반복이 함께 휴지통으로 이동합니다.', doDel, {title:'반복 일정 삭제', danger:true, yes:'삭제'});
-  else doDel();
+  if(!normRepeat(e)){
+    toTrash('ev', e); S.events = S.events.filter(x=>x.id!==id); commit(); return;
+  }
+  openSheetHTML(`<h3>반복 일정 삭제</h3>
+    <p class="sub" style="margin:0 0 12px">${esc(e.title)} · ${selDate.replaceAll('-','. ')} · ${repeatLabel(e)}</p>
+    <button class="btn" style="margin-bottom:8px" onclick="delOneOccur('${id}')">이 일정만 삭제</button>
+    <button class="btn" style="background:var(--red)" onclick="delAllOccur('${id}')">모든 반복 일정 삭제</button>`);
+}
+function delOneOccur(id){
+  const e = S.events.find(x=>x.id===id); if(!e) return;
+  (e.exDates = e.exDates||[]).push(selDate);
+  closeSheet(); commit();
+}
+function delAllOccur(id){
+  const e = S.events.find(x=>x.id===id); if(!e) return;
+  toTrash('ev', e); S.events = S.events.filter(x=>x.id!==id);
+  closeSheet(); commit();
 }
 
 /* ---------- 일정 공유 ---------- */
@@ -1002,7 +1089,8 @@ function openManual(){
   openSheetHTML(`<h3>📖 사용 설명서</h3>
 
   <div class="sec">📅 달력</div>
-  ${row('＋','일정 추가','유형 · 색상 · 반복(매일/매주/매월) 설정')}
+  ${row('＋','일정 추가','유형 · 색상 · 반복(매일·매주 요일 선택·매월 날짜/N째 요일·매년 + 간격·종료일·횟수)')}
+  ${row('🔁','반복 개별 관리','반복 일정의 ✎ · ✕ → [이 일정만] 또는 [모든 반복] 선택')}
   ${row('월/주','보기 전환','월간 달력 ↔ 주간 목록')}
   ${row('✎','일정 수정','제목 · 날짜 · 시간 · 색상 · 반복 변경')}
   ${row('👆','길게 눌러 이동','일정을 끌어서 다른 날짜로 (반복 제외)')}
@@ -1012,13 +1100,17 @@ function openManual(){
   ${row('Ⓖ','구글 일정','계정 시트에서 불러오기 (읽기 전용)')}
 
   <div class="sec">☑️ To-do</div>
-  ${row('📁','폴더 이동','상단 칩 탭')}
-  ${row('📁²','폴더 관리','선택된 칩 한 번 더 탭 → 이름 · 색상 · 삭제')}
+  ${row('📁','폴더 이동','상단 칩 탭 · 폴더 없는 할 일은 [미지정]에 모임')}
+  ${row('📁²','폴더 관리','선택된 칩 한 번 더 탭 → 이름 · 색상 · 기본 폴더 · 삭제')}
+  ${row('★','기본 폴더','지정 시 새 할 일이 자동으로 그 폴더에 · 미지정이면 [미지정]으로')}
+  ${row('●','중요도 점','편집 버튼 옆 점 색상 = 높음(빨강) · 중간(주황) · 낮음(초록)')}
   ${row('⚙','필터 · 정렬','전체/미완료/완료 · 생성/마감/우선순위순')}
   ${row('✎','수정','제목 · 폴더 · 마감일 · 우선순위')}
   ${row('☑²','일괄 삭제','[선택] 탭 → 여러 개 체크 → 삭제')}
 
   <div class="sec">📝 메모</div>
+  ${row('👁','전체 · 미지정 보기','[전체] 칩으로 모든 메모 한눈에 · 폴더 없는 메모는 [미지정]')}
+  ${row('★','기본 폴더','칩 재탭 → 폴더 관리에서 지정 · 새 메모가 자동 분류')}
   ${row('✍','자동 저장','입력 즉시 저장 · 📌 고정 · 폴더 관리는 칩 재탭')}
   ${row('↳','하위 메모','일정 · 할 일 · 메모 어디든 부속 메모 추가 · 탭하면 수정')}
   ${row('☑²','일괄 삭제','[선택] 칩 → 여러 개 체크 → 삭제')}
@@ -1180,14 +1272,58 @@ function delNote(kind,id,nid){
 }
 
 function openAddEvent(){ openEventSheet(null); }
-function openEventSheet(editId){
+function openEventSheet(editId, scope){
   const orig = editId ? S.events.find(x=>x.id===editId) : null;
+  /* 반복 일정 수정: 적용 범위 먼저 선택 */
+  if(orig && normRepeat(orig) && !scope){
+    openSheetHTML(`<h3>반복 일정 수정</h3>
+      <p class="sub" style="margin:0 0 12px">${esc(orig.title)} · ${selDate.replaceAll('-','. ')} · ${repeatLabel(orig)}</p>
+      <button class="btn" style="margin-bottom:8px" onclick="openEventSheet('${editId}','one')">이 일정만 수정</button>
+      <button class="btn" onclick="openEventSheet('${editId}','all')">모든 반복 일정 수정</button>`);
+    return;
+  }
+  const detach = scope==='one';
   let type = orig ? orig.type : 'allday';
   let color = (orig && orig.color) || PALETTE[0];
-  let repeat = (orig && orig.repeat) || 'none';
+  let dateVal = detach ? selDate : (orig ? orig.date : selDate);
+  let r = null; // 반복 편집 상태 (null = 없음)
+  if(orig && !detach){
+    const nr = normRepeat(orig);
+    if(nr) r = {freq:nr.freq, interval:nr.interval||1, days:nr.days?[...nr.days]:null,
+      monthly:nr.monthly||'date', end:nr.count?'count':(nr.until?'until':'none'),
+      until:nr.until||'', count:nr.count||''};
+  }
+  const FREQ = [['none','없음'],['daily','매일'],['weekly','매주'],['monthly','매월'],['yearly','매년']];
+  const UNIT = {daily:'일', weekly:'주', monthly:'개월', yearly:'년'};
+  const repeatOptsHTML = () => {
+    if(!r) return '';
+    const d0 = new Date(dateVal+'T00:00');
+    let h = `<div class="chips" style="align-items:center">
+      <span class="sub" style="font-size:12px;flex-shrink:0">간격</span>
+      <input type="number" id="ae-iv" min="1" max="99" value="${r.interval}" style="width:58px;font-size:12px;padding:7px 8px">
+      <span class="sub" style="font-size:12px;flex-shrink:0">${UNIT[r.freq]}마다</span></div>`;
+    if(r.freq==='weekly'){
+      const days = (r.days && r.days.length) ? r.days : [d0.getDay()];
+      h += `<div class="chips">${DOW_KO.map((n,i)=>
+        `<button class="chip ${days.includes(i)?'on':''}" onclick="window._aeDay(${i})">${n}</button>`).join('')}</div>`;
+    }
+    if(r.freq==='monthly'){
+      h += `<div class="chips">
+        <button class="chip ${r.monthly!=='nth'?'on':''}" onclick="window._aeMon('date')">매월 ${d0.getDate()}일</button>
+        <button class="chip ${r.monthly==='nth'?'on':''}" onclick="window._aeMon('nth')">${NTH_KO[Math.ceil(d0.getDate()/7)-1]} ${DOW_KO[d0.getDay()]}요일</button></div>`;
+    }
+    h += `<div class="chips" style="align-items:center">
+      <span class="sub" style="font-size:12px;flex-shrink:0">종료</span>
+      ${[['none','계속'],['until','날짜'],['count','횟수']].map(([k,l])=>
+        `<button class="chip ${r.end===k?'on':''}" onclick="window._aeEnd('${k}')">${l}</button>`).join('')}
+      ${r.end==='until'?`<input type="date" id="ae-until" value="${r.until||''}" style="width:auto;font-size:12px;padding:7px 8px">`:''}
+      ${r.end==='count'?`<input type="number" id="ae-cnt" min="1" max="500" value="${r.count||10}" style="width:64px;font-size:12px;padding:7px 8px"><span class="sub" style="font-size:12px;flex-shrink:0">회</span>`:''}
+    </div>`;
+    return h;
+  };
   const html = () => `
-    <h3>${orig ? '일정 수정' : selDate.replaceAll('-','. ')+' 일정 추가'}</h3>
-    <input type="date" id="ae-date" value="${orig ? orig.date : selDate}" style="margin-bottom:10px">
+    <h3>${detach ? '이 일정만 수정' : orig ? '일정 수정' : selDate.replaceAll('-','. ')+' 일정 추가'}</h3>
+    <input type="date" id="ae-date" value="${dateVal}" onchange="window._aeDate(this.value)" style="margin-bottom:10px">
     <div class="chips">${Object.entries(TYPES).map(([k,[l]])=>
       `<button class="chip ${type===k?'on':''}" onclick="window._setType('${k}')">${l}</button>`).join('')}</div>
     <input id="ae-title" placeholder="제목" value="${orig ? esc(orig.title) : ''}" style="margin-bottom:10px">
@@ -1195,50 +1331,78 @@ function openEventSheet(editId){
       <input type="time" id="ae-start" value="${orig && orig.start ? orig.start : '09:00'}">
       <input type="time" id="ae-end" value="${orig && orig.end ? orig.end : '10:00'}">
     </div>
+    ${detach ? `<p class="sub" style="margin:0 0 10px">이 날짜의 일정만 단일 일정으로 분리되어 수정됩니다.</p>` : `
     <div class="sub" style="margin-bottom:4px">반복</div>
-    <div class="chips">${Object.entries(REPEAT_LABEL).map(([k,l])=>
-      `<button class="chip ${repeat===k?'on':''}" onclick="window._setRepeat('${k}')">${l}</button>`).join('')}</div>
+    <div class="chips">${FREQ.map(([k,l])=>
+      `<button class="chip ${(r?r.freq:'none')===k?'on':''}" onclick="window._setFreq('${k}')">${l}</button>`).join('')}</div>
+    ${repeatOptsHTML()}`}
     <div class="sub" style="margin-bottom:4px">색상</div>
     <div class="swatches">${(color && !PALETTE.includes(color)) ?
         `<button class="sw on" style="background:${color}"></button>` : ''}${PALETTE.map(c=>
       `<button class="sw ${color===c?'on':''}" style="background:${c}" onclick="window._setColor('${c}')"></button>`).join('')}<button class="sw rainbow" title="직접 선택" onclick="window._pickColor()"></button></div>
-    <button class="btn" onclick="window._submitEvent()">${orig ? '저장' : '추가'}</button>`;
-  const keep = fn => {
-    const ti=document.getElementById('ae-title').value;
-    const dt=document.getElementById('ae-date').value;
-    const s=document.getElementById('ae-start').value, en=document.getElementById('ae-end').value;
-    fn(); openSheetHTML(html());
-    document.getElementById('ae-title').value=ti;
-    document.getElementById('ae-date').value=dt;
-    document.getElementById('ae-start').value=s;
-    document.getElementById('ae-end').value=en;
-  };
+    <button class="btn" onclick="window._submitEvent()">${orig && !detach ? '저장' : detach ? '이 일정만 저장' : '추가'}</button>`;
+  const val = id => { const el = document.getElementById(id); return el ? el.value : null; };
+  const snap = () => ({ti:val('ae-title'), dt:val('ae-date'), s:val('ae-start'), en:val('ae-end'),
+    iv:val('ae-iv'), ut:val('ae-until'), ct:val('ae-cnt')});
+  const restore = o => { const set=(id,v)=>{ const el=document.getElementById(id); if(el && v!=null) el.value=v; };
+    set('ae-title',o.ti); set('ae-date',o.dt); set('ae-start',o.s); set('ae-end',o.en);
+    set('ae-iv',o.iv); set('ae-until',o.ut); set('ae-cnt',o.ct); };
+  const keep = fn => { const o = snap(); fn(); openSheetHTML(html()); restore(o); };
+  window._aeDate = v => keep(()=>{ if(v) dateVal = v; });
   window._setType = t => keep(()=>type=t);
   window._setColor = c => keep(()=>color=c);
-  window._setRepeat = r => keep(()=>repeat=r);
+  window._setFreq = f => keep(()=>{
+    if(f==='none'){ r = null; return; }
+    if(!r) r = {freq:f, interval:1, days:null, monthly:'date', end:'none', until:'', count:''};
+    else r.freq = f;
+    if(f==='weekly' && (!r.days || !r.days.length)) r.days = [new Date(dateVal+'T00:00').getDay()];
+  });
+  window._aeDay = i => keep(()=>{
+    if(!r) return;
+    if(!r.days || !r.days.length) r.days = [new Date(dateVal+'T00:00').getDay()];
+    if(r.days.includes(i)){ if(r.days.length > 1) r.days = r.days.filter(x=>x!==i); }
+    else r.days = [...r.days, i].sort((a,b)=>a-b);
+  });
+  window._aeMon = m => keep(()=>{ if(r) r.monthly = m; });
+  window._aeEnd = m => keep(()=>{ if(r) r.end = m; });
   window._pickColor = () => {
-    const ti=document.getElementById('ae-title').value, dt=document.getElementById('ae-date').value;
-    const s=document.getElementById('ae-start').value, en=document.getElementById('ae-end').value;
-    openColorWheel(color, c=>{
-      color=c; openSheetHTML(html());
-      document.getElementById('ae-title').value=ti; document.getElementById('ae-date').value=dt;
-      document.getElementById('ae-start').value=s; document.getElementById('ae-end').value=en;
-    });
+    const o = snap();
+    openColorWheel(color, c=>{ color = c; openSheetHTML(html()); restore(o); });
   };
   window._submitEvent = () => {
-    const title = document.getElementById('ae-title').value.trim();
-    const date = document.getElementById('ae-date').value || selDate;
+    const title = (val('ae-title')||'').trim();
+    const date = val('ae-date') || selDate;
     if(!title) return;
-    if(orig){
+    let rep; // undefined = 반복 없음
+    if(r && !detach){
+      rep = {freq:r.freq, interval:Math.min(99, Math.max(1, parseInt(val('ae-iv'))||1))};
+      if(rep.interval===1) delete rep.interval;
+      if(r.freq==='weekly') rep.days = ((r.days && r.days.length) ? [...r.days] : [new Date(date+'T00:00').getDay()]).sort((a,b)=>a-b);
+      if(r.freq==='monthly' && r.monthly==='nth') rep.monthly = 'nth';
+      if(r.end==='until'){ const u = val('ae-until'); if(u && u >= date) rep.until = u; }
+      else if(r.end==='count'){
+        const c = Math.min(500, Math.max(1, parseInt(val('ae-cnt'))||0));
+        if(c > 0){ rep.count = c; const u = untilFromCount(date, rep, c); if(u) rep.until = u; }
+      }
+    }
+    if(detach){
+      /* 시리즈에서 이 날짜 제외 + 단일 일정으로 분리 */
+      (orig.exDates = orig.exDates||[]).push(selDate);
+      const ev = {id:uid(), date, type, title, color};
+      if(type==='timed'){ ev.start = val('ae-start'); ev.end = val('ae-end'); }
+      if(type==='checklist') ev.items = (orig.items||[]).map(it=>({...it}));
+      S.events.push(ev);
+    } else if(orig){
       orig.title = title; orig.date = date; orig.type = type; orig.color = color;
-      orig.repeat = repeat==='none' ? undefined : repeat;
-      if(type==='timed'){ orig.start=document.getElementById('ae-start').value; orig.end=document.getElementById('ae-end').value; }
+      orig.repeat = rep;
+      if(!rep) delete orig.exDates;
+      if(type==='timed'){ orig.start = val('ae-start'); orig.end = val('ae-end'); }
       if(type==='checklist' && !orig.items) orig.items = [];
     } else {
       const ev = {id:uid(), date, type, title, color};
-      if(repeat!=='none') ev.repeat = repeat;
-      if(type==='timed'){ ev.start=document.getElementById('ae-start').value; ev.end=document.getElementById('ae-end').value; }
-      if(type==='checklist') ev.items=[];
+      if(rep) ev.repeat = rep;
+      if(type==='timed'){ ev.start = val('ae-start'); ev.end = val('ae-end'); }
+      if(type==='checklist') ev.items = [];
       S.events.push(ev);
     }
     selDate = date;
@@ -1253,7 +1417,8 @@ function renderTodo(){
   const folders = S.todoFolders;
   const chips = `<div class="chips">
     <button class="chip ${todoFolder==='ALL'?'on':''}" onclick="todoFolder='ALL';render()">전체</button>
-    ${folders.map(f=>`<button class="chip ${todoFolder===f.id?'on':''}" onclick="selectTodoFolderChip('${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${esc(f.name)}</button>`).join('')}
+    ${folders.map(f=>`<button class="chip ${todoFolder===f.id?'on':''}" onclick="selectTodoFolderChip('${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${S.defTodoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')}
+    <button class="chip ${todoFolder==='NONE'?'on':''}" onclick="todoFolder='NONE';render()">미지정</button>
     <button class="chip" onclick="promptTodoFolder()">＋ 폴더</button>
   </div>`;
   const filters = `<div class="chips">
@@ -1267,7 +1432,7 @@ function renderTodo(){
       onclick="${selMode?'exitSel()':'enterSel()'}">선택</button>
   </div>`;
 
-  let list = S.todos.filter(t=> todoFolder==='ALL'||t.folderId===todoFolder)
+  let list = S.todos.filter(t=> todoFolder==='ALL' || (todoFolder==='NONE' ? isNoneFid('todo', t.folderId) : t.folderId===todoFolder))
     .filter(t=> todoFilter==='all'?true: todoFilter==='open'? !t.done : t.done);
   if(todoSort==='due') list=[...list].sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
   else if(todoSort==='priority'){ const r={high:0,mid:1,low:2}; list=[...list].sort((a,b)=>r[a.priority]-r[b.priority]); }
@@ -1277,7 +1442,7 @@ function renderTodo(){
   const rows = list.map(t=>{
     const over = t.due && !t.done && t.due < tk;
     const fObj = folders.find(f=>f.id===t.folderId);
-    const folder = todoFolder==='ALL' ? `<span class="sub">${esc(fObj?.name||'')}</span>` : '';
+    const folder = todoFolder==='ALL' ? `<span class="sub">${esc(fObj?.name||'미지정')}</span>` : '';
     if(selMode){
       const on = selIds.has(t.id);
       return `<div class="card" onclick="toggleSel('${t.id}')"
@@ -1294,10 +1459,10 @@ function renderTodo(){
     return `<div class="card" style="border-left:3px solid ${fObj?.color||'transparent'}">
       <div class="todo">
         <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
-        <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
         <span class="t ${t.done?'done':''}">${esc(t.title)}</span>
         ${folder}
         ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
+        <span class="dot" title="중요도 ${PRI[t.priority][0]}" style="background:${PRI[t.priority][1]};width:8px;height:8px"></span>
         <button class="x" onclick="openEditTodo('${t.id}')">${ICO_EDIT}</button>
         <button class="x" onclick="delTodo('${t.id}')">✕</button>
       </div>
@@ -1326,15 +1491,22 @@ function manageFolder(kind, id){
   const cnt = kind==='todo'
     ? S.todos.filter(t=>t.folderId===id).length
     : S.memos.filter(m=>m.folderId===id).length;
-  openSheetHTML(`<h3>폴더: ${esc(f.name)}</h3>
-    <p class="sub" style="margin:0 0 10px">포함된 항목 ${cnt}개</p>
+  const isDef = (kind==='todo' ? S.defTodoFolder : S.defMemoFolder) === id;
+  openSheetHTML(`<h3>폴더: ${esc(f.name)}${isDef?' ★':''}</h3>
+    <p class="sub" style="margin:0 0 10px">포함된 항목 ${cnt}개${isDef?' · 기본 폴더 (새 항목이 여기로 추가됩니다)':''}</p>
     <div class="sub" style="margin-bottom:4px">폴더 색상</div>
     <div class="swatches">${(f.color && !PALETTE.includes(f.color)) ?
         `<button class="sw on" style="background:${f.color}"></button>` : ''}${PALETTE.map(c=>
       `<button class="sw ${(f.color||'')===c?'on':''}" style="background:${c}" onclick="setFolderColor('${kind}','${id}','${c}')"></button>`).join('')}<button class="sw rainbow" title="직접 선택"
         onclick="openColorWheel('${f.color||''}', c=>setFolderColor('${kind}','${id}',c))"></button></div>
+    <button class="btn" style="margin-bottom:8px" onclick="toggleDefFolder('${kind}','${id}')">${isDef?'기본 폴더 해제 (미지정으로)':'★ 기본 폴더로 지정'}</button>
     <button class="btn" style="margin-bottom:8px" onclick="renameFolder('${kind}','${id}')">이름 변경</button>
     <button class="btn" style="background:var(--red)" onclick="deleteFolder('${kind}','${id}')">폴더 삭제</button>`);
+}
+function toggleDefFolder(kind, id){
+  if(kind==='todo') S.defTodoFolder = S.defTodoFolder===id ? null : id;
+  else S.defMemoFolder = S.defMemoFolder===id ? null : id;
+  commit(); manageFolder(kind, id); // 시트 갱신
 }
 function setFolderColor(kind, id, color){
   const arr = kind==='todo' ? S.todoFolders : S.memoFolders;
@@ -1356,6 +1528,7 @@ function deleteFolder(kind, id){
     S.todos.filter(t=>t.folderId===id).forEach(t=>toTrash('td', t));
     S.todos = S.todos.filter(t=>t.folderId!==id);
     S.todoFolders = S.todoFolders.filter(f=>f.id!==id);
+    if(S.defTodoFolder===id) S.defTodoFolder=null;
     if(todoFolder===id) todoFolder='ALL';
     closeSheet(); commit();
     }, {title:'폴더 삭제', danger:true, yes:'삭제'});
@@ -1365,7 +1538,8 @@ function deleteFolder(kind, id){
     S.memos.filter(m=>m.folderId===id).forEach(m=>toTrash('mm', m));
     S.memos = S.memos.filter(m=>m.folderId!==id);
     S.memoFolders = S.memoFolders.filter(f=>f.id!==id);
-    if(memoFolder===id) memoFolder = S.memoFolders[0]?.id || null;
+    if(S.defMemoFolder===id) S.defMemoFolder=null;
+    if(memoFolder===id) memoFolder = 'ALL';
     closeSheet(); commit();
     }, {title:'폴더 삭제', danger:true, yes:'삭제'});
   }
@@ -1382,14 +1556,16 @@ function promptTodoFolder(){
 }
 function openEditTodo(id){
   const t = S.todos.find(x=>x.id===id); if(!t) return;
-  let pri = t.priority, fid = t.folderId;
+  let pri = t.priority, fid = validFid('todo', t.folderId);
   const html = () => `
     <h3>할 일 수정</h3>
     <input id="et-title" placeholder="할 일 제목" value="${esc(t.title)}" style="margin-bottom:10px">
     <div class="chips">${S.todoFolders.map(f=>
-      `<button class="chip ${fid===f.id?'on':''}" onclick="window._etFid('${f.id}')">${esc(f.name)}</button>`).join('')}</div>
-    <div class="chips">
-      <input type="date" id="et-due" value="${t.due||''}" style="width:auto;font-size:12px;padding:7px 10px">
+      `<button class="chip ${fid===f.id?'on':''}" onclick="window._etFid('${f.id}')">${S.defTodoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')}
+      <button class="chip ${fid===null?'on':''}" onclick="window._etFid(null)">미지정</button></div>
+    <div class="chips" style="align-items:center">
+      <span class="sub" style="font-size:12px;flex-shrink:0">마감일</span>
+      <input type="date" id="et-due" value="${t.due||''}" placeholder="마감일" style="width:auto;font-size:12px;padding:7px 10px">
       ${Object.entries(PRI).map(([k,[l]])=>
         `<button class="chip ${pri===k?'on':''}" onclick="window._etPri('${k}')">${l}</button>`).join('')}
     </div>
@@ -1404,7 +1580,7 @@ function openEditTodo(id){
   window._etSubmit = () => {
     const title = document.getElementById('et-title').value.trim();
     if(!title) return;
-    t.title = title; t.folderId = fid; t.priority = pri;
+    t.title = title; t.folderId = fid || null; t.priority = pri;
     t.due = document.getElementById('et-due').value || '';
     closeSheet(); commit();
   };
@@ -1412,14 +1588,16 @@ function openEditTodo(id){
 }
 
 function openAddTodo(){
-  let pri='mid', fid = todoFolder!=='ALL'? todoFolder : (S.todoFolders[0]?.id||null);
+  let pri='mid', fid = newItemFid('todo', todoFolder);
   const html = () => `
     <h3>새 할 일</h3>
     <input id="at-title" placeholder="할 일 제목" style="margin-bottom:10px">
     <div class="chips">${S.todoFolders.map(f=>
-      `<button class="chip ${fid===f.id?'on':''}" onclick="window._setFid('${f.id}')">${esc(f.name)}</button>`).join('')}</div>
-    <div class="chips">
-      <input type="date" id="at-due" style="width:auto;font-size:12px;padding:7px 10px">
+      `<button class="chip ${fid===f.id?'on':''}" onclick="window._setFid('${f.id}')">${S.defTodoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')}
+      <button class="chip ${fid===null?'on':''}" onclick="window._setFid(null)">미지정</button></div>
+    <div class="chips" style="align-items:center">
+      <span class="sub" style="font-size:12px;flex-shrink:0">마감일</span>
+      <input type="date" id="at-due" placeholder="마감일" style="width:auto;font-size:12px;padding:7px 10px">
       ${Object.entries(PRI).map(([k,[l]])=>
         `<button class="chip ${pri===k?'on':''}" onclick="window._setPri('${k}')">${l}</button>`).join('')}
     </div>
@@ -1430,8 +1608,8 @@ function openAddTodo(){
   window._setPri = p => keep(()=>pri=p);
   window._submitTodo = () => {
     const title = document.getElementById('at-title').value.trim();
-    if(!title || !fid) return;
-    S.todos.push({id:uid(),folderId:fid,title,done:false,due:document.getElementById('at-due').value||'',priority:pri,created:Date.now()});
+    if(!title) return;
+    S.todos.push({id:uid(),folderId:fid||null,title,done:false,due:document.getElementById('at-due').value||'',priority:pri,created:Date.now()});
     closeSheet(); commit();
   };
   openSheetHTML(html());
@@ -1441,11 +1619,13 @@ function openAddTodo(){
 /* ---------- 메모 ---------- */
 function renderMemo(){
   const chips = `<div class="chips">
-    ${S.memoFolders.map(f=>`<button class="chip ${memoFolder===f.id?'on':''}" onclick="selectMemoFolderChip('${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${esc(f.name)}</button>`).join('')}
+    <button class="chip ${memoFolder==='ALL'?'on':''}" onclick="memoFolder='ALL';render()">전체</button>
+    ${S.memoFolders.map(f=>`<button class="chip ${memoFolder===f.id?'on':''}" onclick="selectMemoFolderChip('${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${S.defMemoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')}
+    <button class="chip ${memoFolder==='NONE'?'on':''}" onclick="memoFolder='NONE';render()">미지정</button>
     <button class="chip" onclick="promptMemoFolder()">＋ 폴더</button>
     <button class="chip ${selMode?'on':''}" onclick="${selMode?'exitSel()':'enterSel()'}">선택</button>
   </div>`;
-  const list = S.memos.filter(m=>m.folderId===memoFolder)
+  const list = S.memos.filter(m=> memoFolder==='ALL' || (memoFolder==='NONE' ? isNoneFid('memo', m.folderId) : m.folderId===memoFolder))
     .sort((a,b)=> (b.pinned?1:0)-(a.pinned?1:0) || b.updated.localeCompare(a.updated));
   const rows = list.map(m=>{
     const bc = (S.memoFolders.find(f=>f.id===m.folderId)?.color)||'transparent';
@@ -1463,7 +1643,7 @@ function renderMemo(){
     return `<div class="card memo-item" onclick="openEditor('${m.id}')"
       style="border-left:3px solid ${bc}">
       <div class="ttl">${m.pinned?'📌 ':''}${esc(m.title||'제목 없음')}</div>
-      <div class="pv">${m.updated.slice(5,16)}${(m.notes||[]).length?` · 하위 ${m.notes.length}`:''} · ${esc((m.body||'').split('\n')[0]||'내용 없음')}</div>
+      <div class="pv">${m.updated.slice(5,16)}${memoFolder==='ALL'?` · ${esc(S.memoFolders.find(f=>f.id===m.folderId)?.name||'미지정')}`:''}${(m.notes||[]).length?` · 하위 ${m.notes.length}`:''} · ${esc((m.body||'').split('\n')[0]||'내용 없음')}</div>
     </div>`;
   }).join('');
   _selPool = selMode ? list.map(m=>m.id) : _selPool;
@@ -1476,7 +1656,7 @@ function promptMemoFolder(){
   }, {title:'새 폴더', yes:'만들기'});
 }
 function addMemo(){
-  const m = {id:uid(),folderId:memoFolder,title:'',body:'',pinned:false,updated:nowStr()};
+  const m = {id:uid(),folderId:newItemFid('memo', memoFolder),title:'',body:'',pinned:false,updated:nowStr()};
   S.memos.unshift(m); save();
   openEditor(m.id);
 }
@@ -1557,7 +1737,7 @@ function searchResultsHTML(q){
     <div class="card row" onclick="jumpTodo('${t.folderId}')">
       <span class="dot" style="background:${PRI[t.priority][1]}"></span>
       <span style="flex:1;font-size:13px">${esc(t.title)}</span>
-      <span class="sub">${esc(S.todoFolders.find(f=>f.id===t.folderId)?.name||'')}</span>
+      <span class="sub">${esc(S.todoFolders.find(f=>f.id===t.folderId)?.name||'미지정')}</span>
     </div>`).join('');
   if(mm.length) h += `<div class="sec">메모</div>` + mm.map(m=>`
     <div class="card" onclick="jumpMemo('${m.folderId}','${m.id}')">
@@ -1567,8 +1747,8 @@ function searchResultsHTML(q){
   return h;
 }
 function jumpDate(d){ searchMode=false; tab=0; selDate=d; const [y,m]=d.split('-'); calY=+y; calM=+m-1; render(); }
-function jumpTodo(fid){ searchMode=false; tab=1; todoFolder=fid; render(); }
-function jumpMemo(fid,id){ searchMode=false; tab=2; memoFolder=fid; render(); openEditor(id); }
+function jumpTodo(fid){ searchMode=false; tab=1; todoFolder = validFid('todo', fid) || 'NONE'; render(); }
+function jumpMemo(fid,id){ searchMode=false; tab=2; memoFolder = validFid('memo', fid) || 'NONE'; render(); openEditor(id); }
 
 /* ---------- 계정 / 동기화 ---------- */
 function openAccount(){

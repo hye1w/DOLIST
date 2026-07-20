@@ -176,7 +176,7 @@
   /* 할 일 행 */
   .todo{display:flex; align-items:center; gap:9px;}
   .todo input[type=checkbox]{width:18px; height:18px; accent-color:var(--blue); flex-shrink:0; padding:0;}
-  .todo .t{flex:1; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .todo .t{flex:1; font-size:13px; white-space:pre-wrap; word-break:break-word;}
   .badge{font-size:10px; padding:2px 8px; border-radius:12px; background:var(--soft); color:var(--sub); flex-shrink:0;}
   .badge.over{background:var(--red); color:#fff;}
   /* 메모 */
@@ -200,6 +200,17 @@
   .note .x{opacity:.7;}
   .note-add{font-size:11px; padding:4px 10px;}
   .note-in{font-size:12px; padding:7px 10px; margin-top:4px;}
+  .note input[type=checkbox]{width:16px; height:16px; accent-color:var(--blue); flex-shrink:0; padding:0;}
+  /* 하단 빠른 입력줄 (To-do · 메모 탭) */
+  .qa{position:fixed; left:12px; right:12px; bottom:calc(64px + env(safe-area-inset-bottom,0px));
+    z-index:8; background:var(--card); border:1px solid var(--border); border-radius:16px;
+    box-shadow:0 8px 24px rgba(0,0,0,.18); display:flex; align-items:flex-end; gap:6px; padding:8px;}
+  .qa .qa-fold{max-width:96px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    flex-shrink:0; margin-bottom:3px;}
+  .qa textarea{flex:1; resize:none; font-size:13px; line-height:1.5; padding:8px 10px;
+    max-height:96px; background:var(--soft3); border:none; border-radius:10px; min-width:0;}
+  .qa .qa-send{width:34px; height:34px; border:none; border-radius:10px; background:var(--blue);
+    color:#fff; font-size:15px; flex-shrink:0; display:flex; align-items:center; justify-content:center;}
   .chip .fdot{display:inline-block; width:8px; height:8px; border-radius:8px; margin-right:5px; vertical-align:middle;}
   .man-row{display:flex; gap:10px; align-items:flex-start; padding:5px 2px;}
   .man-ic{width:30px; flex-shrink:0; text-align:center; font-size:13px; line-height:1.5;}
@@ -294,13 +305,15 @@
   <header>
     <button class="icon-btn" onclick="closeEditor()">‹</button>
     <h1 style="font-size:16px">메모</h1>
+    <button class="icon-btn" id="save-btn" title="저장" onclick="saveMemoNow()" style="color:var(--blue);font-weight:700">✓</button>
     <button class="icon-btn" id="pin-btn" onclick="togglePin()">📌</button>
     <button class="icon-btn" onclick="deleteMemo()">🗑</button>
   </header>
   <div class="body">
-    <input class="ttl" id="ed-title" placeholder="제목" oninput="editMemo()">
+    <input class="ttl" id="ed-title" placeholder="제목">
+    <div class="chips" id="ed-folders" style="padding:6px 0 2px"></div>
     <div class="sub" id="ed-updated"></div>
-    <textarea id="ed-body" placeholder="메모를 입력하세요…" oninput="editMemo()"></textarea>
+    <textarea id="ed-body" placeholder="메모를 입력하세요…"></textarea>
     <div id="ed-notes" style="padding:8px 0 0"></div>
   </div>
 </div>
@@ -313,7 +326,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v8.5';
+const APP_VERSION = 'v8.6';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -701,6 +714,11 @@ let calY, calM;
 let selDate = todayKey();
 let todoFolder = 'ALL', todoFilter = 'all', todoSort = 'created';
 let memoFolder = 'ALL', curMemoId = null;
+/* v8.6 상태: 하단 빠른 추가 · 목록 내 수정 · 시트 닫기 가드 · 메모 초안 */
+let inlineTodo = null;                                  // 목록에서 바로 수정 중인 할 일 id
+let qaFidSel = { todo:'AUTO', memo:'AUTO' };            // 빠른 추가 저장 폴더 ('AUTO'|폴더id|null)
+let _sheetGuard = null;                                 // 시트 닫기 시 변경사항 확인용 {dirty, save}
+let edDraft = null, edFid = null, edSnap = {t:'',b:'',f:null}; // 메모 에디터 초안·폴더·스냅샷
 
 /* ---------- 폴더 유틸 (미지정 · 기본 폴더) ---------- */
 const _folderArr = kind => kind==='todo' ? S.todoFolders : S.memoFolders;
@@ -729,6 +747,7 @@ function selBarHTML(kind){
   return `<div class="selbar">
     <b>${selIds.size}개 선택</b><span style="flex:1"></span>
     <button class="chip" onclick="selAllPool()">${selIds.size>=_selPool.length && _selPool.length ? '전체해제' : '전체선택'}</button>
+    <button class="chip" onclick="bulkMove('${kind}')">이동</button>
     <button class="chip" style="background:var(--red);color:#fff" onclick="bulkDelete('${kind}')">삭제</button>
     <button class="chip" onclick="exitSel()">취소</button>
   </div>`;
@@ -748,9 +767,118 @@ function bulkDelete(kind){
     commit();
   }, {title:'일괄 삭제', danger:true, yes:'삭제'});
 }
+/* ---------- 일괄 폴더 이동 (v8.6) ---------- */
+function bulkMove(kind){
+  if(!selIds.size){ appAlert('선택된 항목이 없습니다.'); return; }
+  const k = kind==='td' ? 'todo' : 'memo';
+  openSheetHTML(`<h3>폴더로 이동</h3>
+    <p class="sub" style="margin:0 0 10px">선택한 ${selIds.size}개 항목을 이동합니다.</p>
+    <div class="chips wrap">
+      ${_folderArr(k).map(f=>`<button class="chip" onclick="bulkMoveTo('${kind}','${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${esc(f.name)}</button>`).join('')}
+      <button class="chip" onclick="bulkMoveTo('${kind}',null)">미지정</button>
+    </div>`);
+}
+function bulkMoveTo(kind, fid){
+  const list = kind==='td' ? S.todos : S.memos;
+  let n = 0;
+  list.forEach(x=>{ if(selIds.has(x.id)){ x.folderId = fid||null; if(kind==='mm') x.updated = nowStr(); n++; } });
+  selMode = false; selIds = new Set();
+  closeSheet(); commit();
+  appAlert(`${n}개 항목을 이동했습니다.`, '폴더 이동');
+}
+
+/* ---------- 하단 빠른 추가 (To-do · 메모 탭, v8.6) ---------- */
+function qaFolderLabel(kind){
+  const v = qaFidSel[kind];
+  if(v==='AUTO'){ const d = defFid(kind); return d ? '★ '+(_folderArr(kind).find(f=>f.id===d)?.name||'') : '미지정'; }
+  const f = v && _folderArr(kind).find(x=>x.id===v);
+  return f ? f.name : '미지정';
+}
+function qaFidResolve(kind){
+  const v = qaFidSel[kind];
+  if(v==='AUTO') return defFid(kind);           // 선택 안 함 → 기본 폴더(★), 없으면 미지정
+  return validFid(kind, v);
+}
+function qaBarHTML(kind){
+  const ph = kind==='todo' ? '새 할 일 (Enter 추가 · Shift+Enter 줄바꿈)' : '새 메모 (Enter 저장 · 첫 줄이 제목)';
+  return `<div class="qa">
+    <button class="chip qa-fold" onclick="openQaFolder('${kind}')">📁 ${esc(qaFolderLabel(kind))}</button>
+    <textarea id="qa-in-${kind}" data-keep rows="1" placeholder="${ph}" oninput="qaGrow(this)" onkeydown="qaKey(event,'${kind}')"></textarea>
+    <button class="qa-send" onclick="qaSubmit('${kind}')" title="추가">↑</button>
+  </div>`;
+}
+function openQaFolder(kind){
+  const d = defFid(kind);
+  const dName = d ? (_folderArr(kind).find(f=>f.id===d)?.name||'') : '';
+  const sel = qaFidSel[kind];
+  openSheetHTML(`<h3>저장할 폴더</h3>
+    <p class="sub" style="margin:0 0 10px">선택하지 않으면 ${d?`★ 기본 폴더(${esc(dName)})`:'[미지정]'}에 저장됩니다.</p>
+    <div class="chips wrap">
+      <button class="chip ${sel==='AUTO'?'on':''}" onclick="setQaFid('${kind}','AUTO')">자동${d?` (★ ${esc(dName)})`:' (미지정)'}</button>
+      ${_folderArr(kind).map(f=>`<button class="chip ${sel===f.id?'on':''}" onclick="setQaFid('${kind}','${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${esc(f.name)}</button>`).join('')}
+      <button class="chip ${sel===null?'on':''}" onclick="setQaFid('${kind}',null)">미지정</button>
+    </div>`);
+}
+function setQaFid(kind, v){ qaFidSel[kind] = v; closeSheet(); render(); }
+function qaGrow(el){ try{ el.style.height='auto'; el.style.height=Math.min(96, el.scrollHeight)+'px'; }catch(_){} }
+function _insertNL(el){
+  const st = el.selectionStart ?? el.value.length, en = el.selectionEnd ?? st;
+  el.value = el.value.slice(0,st) + '\n' + el.value.slice(en);
+  try{ el.selectionStart = el.selectionEnd = st+1; }catch(_){}
+  qaGrow(el);
+}
+function qaKey(ev, kind){
+  if(ev.key!=='Enter') return;
+  if(ev.shiftKey) return;                                  // Shift+Enter: 줄바꿈(기본)
+  ev.preventDefault();
+  if(ev.ctrlKey){ _insertNL(ev.target); return; }          // Ctrl+Enter: 줄바꿈
+  qaSubmit(kind);                                          // Enter: 저장
+}
+function qaSubmit(kind){
+  const el = document.getElementById('qa-in-'+kind); if(!el) return;
+  const text = (el.value||'').replace(/\s+$/,'');
+  if(!text.trim()) return;                                 // 빈 내용(공백 포함) 저장 안 함
+  const fid = qaFidResolve(kind);
+  if(kind==='todo'){
+    S.todos.push({id:uid(), folderId:fid||null, title:text, done:false, due:'', priority:'mid', created:Date.now()});
+  } else {
+    const lines = text.split('\n');
+    S.memos.unshift({id:uid(), folderId:fid||null, title:lines[0], body:lines.slice(1).join('\n'), pinned:false, updated:nowStr()});
+  }
+  el.value=''; el.style.height='auto';
+  commit();
+  const again = document.getElementById('qa-in-'+kind);
+  if(again){ try{ again.focus(); }catch(_){} }
+}
+
+/* ---------- To-do 목록에서 바로 수정 (v8.6) ---------- */
+function startInlineTodo(id){
+  if(selMode) return;
+  inlineTodo = id; render();
+  const el = document.getElementById('ite-in');
+  if(el){ try{ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }catch(_){} }
+}
+function iteKey(ev, id){
+  if(ev.key==='Escape'){ cancelInlineTodo(); return; }
+  if(ev.key!=='Enter') return;
+  if(ev.shiftKey) return;
+  ev.preventDefault();
+  if(ev.ctrlKey){ _insertNL(ev.target); return; }
+  saveInlineTodo(id);
+}
+function saveInlineTodo(id){
+  const el = document.getElementById('ite-in');
+  const t = S.todos.find(x=>x.id===id);
+  inlineTodo = null;
+  if(!el || !t){ render(); return; }
+  const v = el.value.trim();
+  if(!v){ render(); return; }                              // 빈 내용이면 원래 제목 유지
+  t.title = v; commit();
+}
+function cancelInlineTodo(){ inlineTodo = null; render(); }
 
 /* ================= 네비게이션 ================= */
-function go(i){ tab=i; searchMode=false; selMode=false; selIds=new Set(); render(); }
+function go(i){ tab=i; searchMode=false; selMode=false; selIds=new Set(); inlineTodo=null; render(); }
 function onFab(){
   if(searchMode) return;
   if(tab===0) openAddEvent();
@@ -780,8 +908,8 @@ function _consumeOv(){ try{ if(window.history && history.back){ _popSuppress++; 
 if(window.addEventListener) window.addEventListener('popstate', ()=>{
   if(_popSuppress > 0){ _popSuppress--; return; }
   if(_ovModal){ _ovModal=false; _closeModalNow(); return; }
-  if(_ovSheet){ _ovSheet=false; _closeSheetNow(); return; }
-  if(_ovEditor){ _ovEditor=false; _closeEditorNow(); }
+  if(_ovSheet){ _ovSheet=false; _closeSheetNow(); _sheetGuardFlow(); return; }
+  if(_ovEditor){ _ovEditor=false; _editorCloseFlow(); }
 });
 
 function _modal(html){
@@ -813,7 +941,7 @@ function appConfirm(msg, onYes, opts){
   _modal(`<div class="modal-t">${esc(opts.title||'확인')}</div>
     <p class="modal-m">${esc(msg)}</p>
     <div class="modal-btns">
-      <button class="btn mghost" onclick="closeModal()">취소</button>
+      <button class="btn mghost" onclick="closeModal()">${esc(opts.no||'취소')}</button>
       <button class="btn ${opts.danger?'mdanger':''}" onclick="_mYes()">${esc(opts.yes||'확인')}</button>
     </div>`);
 }
@@ -921,11 +1049,32 @@ function render(){
   document.querySelectorAll('nav button').forEach((b,i)=>b.classList.toggle('on', i===tab && !searchMode));
   const title = searchMode ? '검색' : ['달력','To-do','메모'][tab];
   document.getElementById('page-title').textContent = title;
-  document.getElementById('fab').style.display = (searchMode || selMode) ? 'none' : 'flex';
+  document.getElementById('fab').style.display = (searchMode || selMode || tab!==0) ? 'none' : 'flex';
   const m = document.getElementById('main');
   if(searchMode){ m.innerHTML = renderSearch(); const si=document.getElementById('search-in'); if(si){ si.focus(); si.setSelectionRange(searchQ.length,searchQ.length);} return; }
+  const kept = _snapKeep();                    // 재렌더 시 입력 중인 값·포커스 보존
   m.innerHTML = tab===0 ? renderCalendar() : tab===1 ? renderTodo() : renderMemo();
+  _restKeep(kept);
   hardenInputs();
+}
+/* 재렌더(동기화 수신 등) 시 data-keep 입력값·커서 보존 */
+function _snapKeep(){
+  const o = {};
+  try{
+    document.querySelectorAll('#main [data-keep]').forEach(el=>{
+      if(!el.id) return;
+      o[el.id] = { v: el.value, f: document.activeElement===el, s: el.selectionStart, e: el.selectionEnd };
+    });
+  }catch(_){}
+  return o;
+}
+function _restKeep(o){
+  for(const id in o){
+    const el = document.getElementById(id); if(!el) continue;
+    el.value = o[id].v;
+    if(el.tagName==='TEXTAREA') qaGrow(el);
+    if(o[id].f){ try{ el.focus(); el.setSelectionRange(o[id].s, o[id].e); }catch(_){} }
+  }
 }
 
 /* ---------- 달력 ---------- */
@@ -1378,6 +1527,7 @@ function openManual(){
   ${row('👥','공유','상대를 초대하면 서로 댓글 가능')}
   ${row('Ⓖ','구글 일정','여러 구글 계정 연결 가능 · 계정별 색상으로 표시 (읽기 전용)')}
   ${row('⟳','당겨서 새로고침','달력 화면 맨 위에서 아래로 당기면 연결된 구글 캘린더를 다시 불러옴')}
+  ${row('✕','닫을 때 확인','일정 작성·수정 중에 닫으면 변경사항을 저장할지 확인 (v8.6)')}
 
   <div class="sec">☑️ To-do</div>
   ${row('📁','폴더 이동','상단 칩 탭 · 폴더가 많으면 여러 줄로 표시 · 폴더 없는 할 일은 [미지정]에 모임')}
@@ -1385,15 +1535,21 @@ function openManual(){
   ${row('★','기본 폴더','지정 시 새 할 일이 자동으로 그 폴더에 · 미지정이면 [미지정]으로')}
   ${row('●','중요도 점','편집 버튼 옆 점 색상 = 높음(빨강) · 중간(주황) · 낮음(초록)')}
   ${row('⚙','필터 · 정렬','전체/미완료/완료 · 생성/마감/우선순위순')}
-  ${row('✎','수정','제목 · 폴더 · 마감일 · 우선순위')}
-  ${row('☑²','일괄 삭제','[선택] 탭 → 여러 개 체크 → 삭제')}
+  ${row('⌨','하단 빠른 추가','아래 입력줄에 바로 입력 · Enter 추가 · Shift/Ctrl+Enter 줄바꿈 · 📁로 저장 폴더 선택 — 선택 안 하면 ★ 기본 폴더(없으면 미지정)로 저장')}
+  ${row('✎','바로 수정','제목을 탭하면 그 자리에서 수정 · Enter 저장 · Shift/Ctrl+Enter 줄바꿈 · 여러 줄 할 일 가능')}
+  ${row('✎²','상세 수정','✎ 버튼 → 폴더 · 마감일 · 우선순위 (작성 중 닫으면 저장 여부 확인)')}
+  ${row('↳☑','하위 메모 체크','할 일의 하위 메모에 체크박스로 세부 단계 완료 표시')}
+  ${row('☑²','일괄 삭제 · 이동','[선택] 탭 → 여러 개 체크 → 삭제 또는 폴더 이동')}
 
   <div class="sec">📝 메모</div>
   ${row('👁','전체 · 미지정 보기','[전체] 칩으로 모든 메모 한눈에 · 폴더 없는 메모는 [미지정]')}
   ${row('★','기본 폴더','칩 재탭 → 폴더 관리에서 지정 · 새 메모가 자동 분류')}
-  ${row('✍','자동 저장','입력 즉시 저장 · 📌 고정 · 폴더 관리는 칩 재탭')}
+  ${row('⌨','하단 빠른 추가','아래 입력줄로 바로 추가 · 첫 줄이 제목 · 📁로 저장 폴더 선택')}
+  ${row('📂','폴더 지정','에디터 제목 아래 칩으로 작성 · 수정 중 언제든 폴더 변경')}
+  ${row('✍','저장 방식','✓ 버튼으로 저장 · 닫을 때 변경사항이 있으면 저장 여부 확인 · 빈 메모(공백만)는 저장되지 않음')}
+  ${row('✕','빠른 삭제','목록의 ✕ 버튼으로 바로 휴지통 이동')}
   ${row('↳','하위 메모','일정 · 할 일 · 메모 어디든 부속 메모 추가 · 탭하면 수정')}
-  ${row('☑²','일괄 삭제','[선택] 칩 → 여러 개 체크 → 삭제')}
+  ${row('☑²','일괄 삭제 · 이동','[선택] 칩 → 여러 개 체크 → 삭제 또는 폴더 이동')}
 
   <div class="sec">👤 계정</div>
   ${row('●','동기화 상태','회색 로컬 · 주황 전송 중 · 초록 완료')}
@@ -1507,16 +1663,22 @@ function notesHTML(kind, item){
   const key = kind + item.id;
   const list = notes.map(n=>`
     <div class="note" onclick="editNote('${kind}','${item.id}','${n.id}')">
-      <span>${esc(n.text)}</span>
+      ${kind==='td'?`<input type="checkbox" ${n.done?'checked':''} onclick="event.stopPropagation()" onchange="toggleNoteDone('${kind}','${item.id}','${n.id}')">`:''}
+      <span class="${kind==='td'&&n.done?'done':''}">${esc(n.text)}</span>
       <button class="x" onclick="event.stopPropagation();delNote('${kind}','${item.id}','${n.id}')">✕</button>
     </div>`).join('');
   const input = noteOpen[key]
-    ? `<input class="note-in" placeholder="하위 메모 입력 후 엔터" autofocus
+    ? `<input class="note-in" id="note-in-${key}" data-keep placeholder="하위 메모 입력 후 엔터" autofocus
          onkeydown="if(event.key==='Enter'&&this.value.trim()){addNote('${kind}','${item.id}',this.value.trim());}">`
     : '';
   return `<div class="notes" style="display:${notes.length||noteOpen[key]?'flex':'none'}">${list}${input}</div>
     <button class="chip note-add" onclick="toggleNoteInput('${kind}','${item.id}')" style="margin-top:6px">
       ${noteOpen[key]?'입력 닫기':'＋ 하위 메모'}${notes.length?` (${notes.length})`:''}</button>`;
+}
+function toggleNoteDone(kind,id,nid){          // 할 일 하위 메모 체크 (v8.6)
+  const p = findParent(kind,id); if(!p || !p.notes) return;
+  const n = p.notes.find(x=>x.id===nid); if(!n) return;
+  n.done = !n.done; commit();
 }
 function toggleNoteInput(kind,id){
   const key = kind+id;
@@ -1653,7 +1815,7 @@ function openEventSheet(editId, scope){
   window._submitEvent = () => {
     const title = (val('ae-title')||'').trim();
     const date = val('ae-date') || selDate;
-    if(!title) return;
+    if(!title){ appAlert('제목을 입력하세요.'); return; }
     let rep; // undefined = 반복 없음
     if(r && !detach){
       rep = {freq:r.freq, interval:Math.min(99, Math.max(1, parseInt(val('ae-iv'))||1))};
@@ -1690,10 +1852,25 @@ function openEventSheet(editId, scope){
       gmark(ev);
     }
     selDate = date;
-    closeSheet(); commit();
+    sheetSaved(); commit();
   };
   openSheetHTML(html());
   document.getElementById('ae-title').focus();
+  /* 작성 중 닫기 확인 (v8.6) */
+  const _init = { type, color };
+  const _base = { title: orig ? orig.title : '', date: detach ? selDate : (orig ? orig.date : selDate),
+    start: (orig && orig.start) || '09:00', end: (orig && orig.end) || '10:00' };
+  _sheetGuard = {
+    dirty(){
+      const el = document.getElementById('ae-title'); if(!el) return false;
+      const t = (el.value||'').trim();
+      if(!orig) return !!t;
+      return t !== _base.title || (val('ae-date')||'') !== _base.date
+        || type !== _init.type || color !== _init.color
+        || (type==='timed' && ((val('ae-start')||'') !== _base.start || (val('ae-end')||'') !== _base.end));
+    },
+    save(){ window._submitEvent(); }
+  };
 }
 
 /* ---------- To-do ---------- */
@@ -1740,10 +1917,23 @@ function renderTodo(){
         </div>
       </div>`;
     }
+    if(inlineTodo===t.id){                       // 목록에서 바로 수정 (v8.6)
+      return `<div class="card" style="border-left:3px solid ${fObj?.color||'transparent'}">
+        <div class="todo" style="align-items:flex-start">
+          <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
+          <textarea id="ite-in" data-keep rows="2" style="flex:1;min-width:0;font-size:13px;line-height:1.5;padding:8px 10px;resize:none"
+            onkeydown="iteKey(event,'${t.id}')">${esc(t.title)}</textarea>
+          <button class="x" style="color:var(--blue);font-weight:700" title="저장" onclick="saveInlineTodo('${t.id}')">✓</button>
+          <button class="x" title="취소" onclick="cancelInlineTodo()">✕</button>
+        </div>
+        <div class="sub" style="margin:4px 0 0 27px;font-size:10.5px">Enter 저장 · Shift/Ctrl+Enter 줄바꿈</div>
+        ${notesHTML('td', t)}
+      </div>`;
+    }
     return `<div class="card" style="border-left:3px solid ${fObj?.color||'transparent'}">
       <div class="todo">
         <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
-        <span class="t ${t.done?'done':''}">${esc(t.title)}</span>
+        <span class="t ${t.done?'done':''}" onclick="startInlineTodo('${t.id}')">${esc(t.title)}</span>
         ${folder}
         ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
         <span class="dot" title="중요도 ${PRI[t.priority][0]}" style="background:${PRI[t.priority][1]};width:8px;height:8px"></span>
@@ -1755,8 +1945,9 @@ function renderTodo(){
   }).join('');
   _selPool = selMode ? list.map(t=>t.id) : [];
 
-  return chips + filters + (rows || `<div class="empty">표시할 할 일이 없습니다.</div>`)
-    + (selMode ? selBarHTML('td') : '');
+  return chips + filters + (rows || `<div class="empty">표시할 할 일이 없습니다.<br>아래 입력줄로 바로 추가하세요.</div>`)
+    + `<div style="height:74px"></div>`
+    + (selMode ? selBarHTML('td') : qaBarHTML('todo'));
 }
 function toggleTodo(id){ const t=S.todos.find(t=>t.id===id); t.done=!t.done; commit(); }
 
@@ -1843,7 +2034,8 @@ function openEditTodo(id){
   let pri = t.priority, fid = validFid('todo', t.folderId);
   const html = () => `
     <h3>할 일 수정</h3>
-    <input id="et-title" placeholder="할 일 제목" value="${esc(t.title)}" style="margin-bottom:10px">
+    <textarea id="et-title" rows="2" placeholder="할 일 제목 (여러 줄 입력 가능)"
+      style="margin-bottom:10px;resize:none;line-height:1.5">${esc(t.title)}</textarea>
     <div class="chips wrap">${S.todoFolders.map(f=>
       `<button class="chip ${fid===f.id?'on':''}" onclick="window._etFid('${f.id}')">${S.defTodoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')}
       <button class="chip ${fid===null?'on':''}" onclick="window._etFid(null)">미지정</button></div>
@@ -1863,19 +2055,29 @@ function openEditTodo(id){
   window._etPri = v => keep(()=>pri=v);
   window._etSubmit = () => {
     const title = document.getElementById('et-title').value.trim();
-    if(!title) return;
+    if(!title){ appAlert('제목을 입력하세요.'); return; }
     t.title = title; t.folderId = fid || null; t.priority = pri;
     t.due = document.getElementById('et-due').value || '';
-    closeSheet(); commit();
+    sheetSaved(); commit();
   };
   openSheetHTML(html());
+  _sheetGuard = {                                   // 작성 중 닫기 확인 (v8.6)
+    dirty(){
+      const el = document.getElementById('et-title'); if(!el) return false;
+      return (el.value||'').trim() !== t.title
+        || (document.getElementById('et-due')?.value||'') !== (t.due||'')
+        || fid !== validFid('todo', t.folderId) || pri !== t.priority;
+    },
+    save(){ window._etSubmit(); }
+  };
 }
 
 function openAddTodo(){
   let pri='mid', fid = newItemFid('todo', todoFolder);
   const html = () => `
     <h3>새 할 일</h3>
-    <input id="at-title" placeholder="할 일 제목" style="margin-bottom:10px">
+    <textarea id="at-title" rows="2" placeholder="할 일 제목 (여러 줄 입력 가능)"
+      style="margin-bottom:10px;resize:none;line-height:1.5"></textarea>
     <div class="chips wrap">${S.todoFolders.map(f=>
       `<button class="chip ${fid===f.id?'on':''}" onclick="window._setFid('${f.id}')">${S.defTodoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')}
       <button class="chip ${fid===null?'on':''}" onclick="window._setFid(null)">미지정</button></div>
@@ -1892,12 +2094,16 @@ function openAddTodo(){
   window._setPri = p => keep(()=>pri=p);
   window._submitTodo = () => {
     const title = document.getElementById('at-title').value.trim();
-    if(!title) return;
+    if(!title){ appAlert('제목을 입력하세요.'); return; }
     S.todos.push({id:uid(),folderId:fid||null,title,done:false,due:document.getElementById('at-due').value||'',priority:pri,created:Date.now()});
-    closeSheet(); commit();
+    sheetSaved(); commit();
   };
   openSheetHTML(html());
   document.getElementById('at-title').focus();
+  _sheetGuard = {                                   // 작성 중 닫기 확인 (v8.6)
+    dirty(){ const el = document.getElementById('at-title'); return !!(el && (el.value||'').trim()); },
+    save(){ window._submitTodo(); }
+  };
 }
 
 /* ---------- 메모 ---------- */
@@ -1926,67 +2132,159 @@ function renderMemo(){
     }
     return `<div class="card memo-item" onclick="openEditor('${m.id}')"
       style="border-left:3px solid ${bc}">
-      <div class="ttl">${m.pinned?'📌 ':''}${esc(m.title||'제목 없음')}</div>
-      <div class="pv">${m.updated.slice(5,16)}${memoFolder==='ALL'?` · ${esc(S.memoFolders.find(f=>f.id===m.folderId)?.name||'미지정')}`:''}${(m.notes||[]).length?` · 하위 ${m.notes.length}`:''} · ${esc((m.body||'').split('\n')[0]||'내용 없음')}</div>
+      <div class="row" style="align-items:flex-start">
+        <div style="flex:1;min-width:0">
+          <div class="ttl">${m.pinned?'📌 ':''}${esc(m.title||'제목 없음')}</div>
+          <div class="pv">${m.updated.slice(5,16)}${memoFolder==='ALL'?` · ${esc(S.memoFolders.find(f=>f.id===m.folderId)?.name||'미지정')}`:''}${(m.notes||[]).length?` · 하위 ${m.notes.length}`:''} · ${esc((m.body||'').split('\n')[0]||'내용 없음')}</div>
+        </div>
+        <button class="x" title="삭제" onclick="event.stopPropagation();delMemoQuick('${m.id}')">✕</button>
+      </div>
     </div>`;
   }).join('');
   _selPool = selMode ? list.map(m=>m.id) : _selPool;
-  return chips + (rows || `<div class="empty">메모가 없습니다.<br>＋ 버튼으로 새로 만드세요.</div>`)
-    + (selMode ? selBarHTML('mm') : '');
+  return chips + (rows || `<div class="empty">메모가 없습니다.<br>아래 입력줄로 바로 추가하세요.</div>`)
+    + `<div style="height:74px"></div>`
+    + (selMode ? selBarHTML('mm') : qaBarHTML('memo'));
 }
 function promptMemoFolder(){
   appPrompt('폴더 이름을 입력하세요.', '', name=>{
     if(name && name.trim()){ const f={id:uid(),name:name.trim()}; S.memoFolders.push(f); memoFolder=f.id; commit(); }
   }, {title:'새 폴더', yes:'만들기'});
 }
+/* 메모 에디터 (v8.6): 자동 저장 → ✓ 저장 + 닫을 때 변경사항 확인,
+   빈 메모(공백 포함)는 저장되지 않음, 폴더도 에디터에서 선택 */
 function addMemo(){
-  const m = {id:uid(),folderId:newItemFid('memo', memoFolder),title:'',body:'',pinned:false,updated:nowStr()};
-  S.memos.unshift(m); save();
-  openEditor(m.id);
+  edDraft = { id: uid(), pinned: false };            // 저장 전 초안 (S.memos에 넣지 않음)
+  curMemoId = null;
+  edFid = qaFidResolve('memo');                      // 빠른 추가와 동일한 기본 폴더 규칙
+  _openEditorUI('', '', '새 메모 · ✓ 또는 닫을 때 저장', false);
+  renderEditorNotes();
+  const ti = document.getElementById('ed-title');
+  if(ti){ try{ ti.focus(); }catch(_){} }
 }
 function openEditor(id){
-  curMemoId = id;
-  const m = S.memos.find(m=>m.id===id);
-  document.getElementById('ed-title').value = m.title;
-  document.getElementById('ed-body').value = m.body;
-  document.getElementById('ed-updated').textContent = '수정: '+m.updated;
-  document.getElementById('pin-btn').style.opacity = m.pinned? '1':'0.4';
+  const m = S.memos.find(m=>m.id===id); if(!m) return;
+  curMemoId = id; edDraft = null;
+  edFid = validFid('memo', m.folderId);
+  _openEditorUI(m.title, m.body, '수정: '+m.updated, m.pinned);
+  renderEditorNotes();
+}
+function _openEditorUI(t, b, upd, pinned){
+  document.getElementById('ed-title').value = t;
+  document.getElementById('ed-body').value = b;
+  document.getElementById('ed-updated').textContent = upd;
+  document.getElementById('pin-btn').style.opacity = pinned ? '1' : '0.4';
+  edSnap = { t, b, f: edFid };
+  renderEdFolders();
   const ed = document.getElementById('editor');
   if(!ed.classList.contains('open')){ _ovEditor=true; _pushOv(); }
   ed.classList.add('open');
-  renderEditorNotes();
   hardenInputs();
 }
+function renderEdFolders(){                          // 에디터 내 폴더 선택 칩 (v8.6)
+  const box = document.getElementById('ed-folders'); if(!box) return;
+  box.innerHTML = S.memoFolders.map(f=>
+    `<button class="chip ${edFid===f.id?'on':''}" onclick="setEdFid('${f.id}')"><span class="fdot" style="background:${f.color||'#8E8E93'}"></span>${S.defMemoFolder===f.id?'★ ':''}${esc(f.name)}</button>`).join('')
+    + `<button class="chip ${edFid===null?'on':''}" onclick="setEdFid(null)">미지정</button>`;
+}
+function setEdFid(v){ edFid = validFid('memo', v); renderEdFolders(); }
 function renderEditorNotes(){
+  const box = document.getElementById('ed-notes'); if(!box) return;
+  if(edDraft){ box.innerHTML = `<div class="sub">하위 메모는 저장(✓) 후 사용할 수 있습니다.</div>`; return; }
   const m = S.memos.find(m=>m.id===curMemoId);
-  const box = document.getElementById('ed-notes');
-  if(!m || !box){ if(box) box.innerHTML=''; return; }
+  if(!m){ box.innerHTML=''; return; }
   box.innerHTML = notesHTML('mm', m);
 }
-function _closeEditorNow(){ document.getElementById('editor').classList.remove('open'); render(); }
-function closeEditor(){
-  _closeEditorNow();
-  if(_ovEditor){ _ovEditor=false; _consumeOv(); }
+function _memoFieldVals(){
+  const ti = document.getElementById('ed-title'), bo = document.getElementById('ed-body');
+  return { t: ti ? ti.value : '', b: bo ? bo.value : '' };
 }
-function editMemo(){
-  const m = S.memos.find(m=>m.id===curMemoId); if(!m) return;
-  m.title = document.getElementById('ed-title').value;
-  m.body = document.getElementById('ed-body').value;
-  m.updated = nowStr();
-  document.getElementById('ed-updated').textContent = '수정: '+m.updated;
+function saveMemoNow(){                              // ✓ 저장 (열린 채 유지)
+  const { t, b } = _memoFieldVals();
+  if(edDraft){
+    if(!t.trim() && !b.trim()){ appAlert('제목이나 내용을 입력하세요.', '메모 저장'); return; }
+    const m = { id: edDraft.id, folderId: edFid||null, title: t, body: b, pinned: edDraft.pinned, updated: nowStr() };
+    S.memos.unshift(m);
+    curMemoId = m.id; edDraft = null;
+    save();
+    edSnap = { t, b, f: edFid };
+    document.getElementById('ed-updated').textContent = '수정: '+m.updated;
+    renderEditorNotes();
+    return;
+  }
+  const m = S.memos.find(x=>x.id===curMemoId); if(!m) return;
+  m.title = t; m.body = b; m.folderId = edFid||null; m.updated = nowStr();
   save();
+  edSnap = { t, b, f: edFid };
+  document.getElementById('ed-updated').textContent = '수정: '+m.updated;
+}
+function _editorCloseFlow(){                          // 닫기 공통 (뒤로가기 포함)
+  const { t, b } = _memoFieldVals();
+  const ed = document.getElementById('editor');
+  if(edDraft){
+    const d = edDraft, f = edFid;
+    edDraft = null; curMemoId = null;
+    ed.classList.remove('open'); render();
+    if(!t.trim() && !b.trim()) return;                // 빈 메모는 저장하지 않음
+    appConfirm('작성 중인 메모가 있습니다.\n저장할까요?', ()=>{
+      S.memos.unshift({ id:d.id, folderId:f||null, title:t, body:b, pinned:d.pinned, updated:nowStr() });
+      commit();
+    }, {title:'메모 저장', yes:'저장', no:'저장 안 함'});
+    return;
+  }
+  const m = S.memos.find(x=>x.id===curMemoId);
+  const dirty = !!m && (t !== edSnap.t || b !== edSnap.b || edFid !== edSnap.f);
+  const f = edFid;
+  curMemoId = null;
+  ed.classList.remove('open'); render();
+  if(dirty){
+    appConfirm('변경사항을 저장할까요?', ()=>{
+      m.title = t; m.body = b; m.folderId = f||null; m.updated = nowStr(); commit();
+    }, {title:'메모 저장', yes:'저장', no:'저장 안 함'});
+  }
+}
+function closeEditor(){
+  const wasOv = _ovEditor; _ovEditor = false;
+  _editorCloseFlow();
+  if(wasOv) _consumeOv();
 }
 function togglePin(){
+  if(edDraft){
+    edDraft.pinned = !edDraft.pinned;
+    document.getElementById('pin-btn').style.opacity = edDraft.pinned ? '1' : '0.4';
+    return;
+  }
   const m = S.memos.find(m=>m.id===curMemoId); if(!m) return;
   m.pinned = !m.pinned; m.updated = nowStr(); save();
   document.getElementById('pin-btn').style.opacity = m.pinned? '1':'0.4';
 }
+function _forceCloseEditor(){
+  document.getElementById('editor').classList.remove('open');
+  if(_ovEditor){ _ovEditor=false; _consumeOv(); }
+  render();
+}
 function deleteMemo(){
+  if(edDraft){
+    appConfirm('작성 중인 메모를 저장하지 않고 닫을까요?', ()=>{
+      edDraft = null; curMemoId = null; _forceCloseEditor();
+    }, {title:'메모 닫기', danger:true, yes:'닫기'});
+    return;
+  }
   appConfirm('이 메모를 삭제할까요?\n휴지통에 15일간 보관됩니다.', ()=>{
     const m = S.memos.find(x=>x.id===curMemoId);
     if(m) toTrash('mm', m);
     S.memos = S.memos.filter(x=>x.id!==curMemoId);
-    curMemoId = null; save(); closeEditor();
+    curMemoId = null; save(); _forceCloseEditor();
+  }, {title:'메모 삭제', danger:true, yes:'삭제'});
+}
+/* 목록에서 바로 삭제 (v8.6) */
+function delMemoQuick(id){
+  const m = S.memos.find(x=>x.id===id); if(!m) return;
+  appConfirm(`"${m.title||'제목 없음'}"\n메모를 휴지통으로 이동할까요?`, ()=>{
+    toTrash('mm', m);
+    S.memos = S.memos.filter(x=>x.id!==id);
+    if(curMemoId===id) curMemoId = null;
+    commit();
   }, {title:'메모 삭제', danger:true, yes:'삭제'});
 }
 
@@ -2103,9 +2401,19 @@ function openSheetHTML(html){
   hardenInputs();
 }
 function _closeSheetNow(){ document.getElementById('sheet-bg').classList.remove('open'); }
+/* 작성 중 닫기 → 변경사항 저장 확인 (v8.6). 시트 편집기가 _sheetGuard={dirty,save}를 등록 */
+function _sheetGuardFlow(){
+  const g = _sheetGuard; _sheetGuard = null;
+  if(g && g.dirty && g.dirty()){
+    appConfirm('작성 중인 내용이 있습니다.\n저장할까요?', ()=>{ if(g.save) g.save(); },
+      {title:'변경사항 저장', yes:'저장', no:'저장 안 함'});
+  }
+}
+function sheetSaved(){ _sheetGuard = null; closeSheet(); } // 저장 버튼 경로: 확인 없이 닫기
 function closeSheet(){
   _closeSheetNow();
   if(_ovSheet){ _ovSheet=false; _consumeOv(); }
+  _sheetGuardFlow();
 }
 
 render();

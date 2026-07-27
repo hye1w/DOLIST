@@ -336,7 +336,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v9.0';
+const APP_VERSION = 'v9.1';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -346,7 +346,7 @@ const nowStr = () => { const n=new Date(); return `${todayKey()} ${pad(n.getHour
 let _id = Date.now()%1e6;
 const uid = () => String(++_id);
 
-const TYPES = { allday:['종일','var(--blue)'], timed:['시간','var(--purple)'], memo:['메모','var(--orange)'], checklist:['체크','var(--green)'] };
+const TYPES = { allday:['종일','var(--blue)'], timed:['시간','var(--purple)'], memo:['메모','var(--orange)'], checklist:['할일','var(--green)'] };
 const PRI = { high:['높음','var(--red)'], mid:['중간','var(--orange)'], low:['낮음','var(--green)'] };
 const PALETTE = ['#0A6CFF','#BF5AF2','#FF453A','#FF9F0A','#28C840','#64D2FF','#FF6482','#8E8E93'];
 const ICO_EDIT = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1217,8 +1217,8 @@ function chipHTML(e){
     return `<div class="ev"${drag} style="background:${c};color:#fff">${sh}${esc(e.title)}</div>`;
   if(!e._td && e.type==='memo')                  // v9.0: 메모형은 ✔ 표시
     return `<div class="ev dotline"${drag}><span class="mk" style="color:${c}">✔</span><em>${sh}${esc(e.title)}</em></div>`;
-  if(!e._td && e.type==='checklist'){            // v9.0: 체크형은 체크박스 (전부 완료 시 ☑)
-    const dn = (e.items||[]).length>0 && e.items.every(it=>it.done);
+  if(!e._td && e.type==='checklist'){            // v9.1: 할일 유형은 완료 체크(e.done) 기준 ☐/☑
+    const dn = !!e.done;
     return `<div class="ev dotline"${drag}><span class="mk" style="color:${c}">${dn?'☑':'☐'}</span><em>${sh}${esc(e.title)}</em></div>`;
   }
   const label = (!e._td && e.type==='timed' ? e.start+' ' : '') + e.title;
@@ -1317,10 +1317,14 @@ function dayDetailHTML(){
         + `<input style="margin-top:6px;font-size:12px;padding:8px 10px" placeholder="항목 추가"
              onkeydown="if(event.key==='Enter'&&this.value.trim()){addCk('${e.id}',this.value.trim());}">`;
     }
+    const lead = e.type==='checklist'                 // v9.1: 할일 유형은 실제 체크박스
+      ? `<input type="checkbox" ${e.done?'checked':''} style="width:17px;height:17px;padding:0;flex-shrink:0;accent-color:${c}"
+           onclick="event.stopPropagation()" onchange="toggleEvDone('${e.id}')">`
+      : `<span class="dot" style="background:${c}"></span>`;
     detail += `<div class="card">
       <div class="row">
-        <span class="dot" style="background:${c}"></span>
-        <b style="font-size:13px;flex:1">${esc(e.title)}</b>
+        ${lead}
+        <b class="${e.type==='checklist'&&e.done?'done':''}" style="font-size:13px;flex:1">${esc(e.title)}</b>
         <button class="x" title="수정" onclick="openEventSheet('${e.id}')">${ICO_EDIT}</button>
         <button class="x" title="공유" onclick="openShare('${e.id}')">👥</button>
         <button class="x" onclick="delEvent('${e.id}')">✕</button>
@@ -1578,7 +1582,8 @@ function openManual(){
 
   <div class="sec">📅 달력</div>
   ${row('＋','일정 추가','＋ 버튼 또는 선택된 날짜 칸을 한 번 더 탭 · 유형 · 색상 · 반복(매일·매주 요일 선택·매월 날짜/N째 요일·매년 + 간격·종료일·횟수)')}
-  ${row('◧','유형별 표시','종일=색 배경 · 시간=점+시각 · 메모=✔ · 체크=☐(항목 전부 완료 시 ☑)')}
+  ${row('◧','유형별 표시','종일=색 배경 · 시간=점+시각 · 메모=✔ · 할일=☐(완료 체크 시 ☑)')}
+  ${row('☐','할일 유형','상세보기에서 체크박스로 완료 표시 · [항목 추가]로 세부 항목도 체크 가능')}
   ${row('🔁','반복 개별 관리','반복 일정의 ✎ · ✕ → [이 일정만] 또는 [모든 반복] 선택')}
   ${row('월/주','보기 전환','월간 달력 ↔ 주간 목록')}
   ${row('✎','일정 수정','제목 · 날짜 · 시간 · 색상 · 반복 변경')}
@@ -1598,7 +1603,7 @@ function openManual(){
   ${row('⚙','필터 · 정렬','전체/미완료/완료(처음엔 미완료만 표시) · 생성/마감/우선순위순')}
   ${row('⌨','하단 빠른 추가','아래 입력줄에 입력 후 ↑ 버튼으로 추가 · Enter는 줄바꿈 (PC는 Ctrl+Enter로 바로 추가) · 📁로 저장 폴더 선택 — 선택 안 하면 ★ 기본 폴더(없으면 미지정)로 저장')}
   ${row('✎','바로 수정','제목을 탭하면 그 자리에서 수정 · ✓ 저장 · ✕ 취소 · 다른 곳을 탭하면 자동 저장 · Enter는 줄바꿈 (PC는 Ctrl+Enter로 저장)')}
-  ${row('✎²','상세 수정','제목 아래 정보줄(점·마감일·폴더)을 탭 → 폴더 · 마감일 · 우선순위 (작성 중 닫으면 저장 여부 확인)')}
+  ${row('✎²','상세 수정','제목 아래 정보줄(중요도 점·마감일)을 탭 → 폴더 · 마감일 · 우선순위 (작성 중 닫으면 저장 여부 확인)')}
   ${row('↳☑','하위 메모','체크박스로 세부 단계 완료 표시 · 내용을 탭하면 그 자리에서 바로 수정 (✓ 또는 다른 곳 탭 = 저장 · Enter 줄바꿈)')}
   ${row('☑²','일괄 삭제 · 이동','[선택] 탭 → 여러 개 체크 → 삭제 또는 폴더 이동')}
 
@@ -1709,6 +1714,7 @@ function shDelete(id){
     FB.shareDelete(id).catch(err=>appAlert(err.message, '삭제 실패'));
   }, {title:'공유 일정 삭제', danger:true, yes:'삭제'});
 }
+function toggleEvDone(id){ const e=S.events.find(x=>x.id===id); if(!e) return; e.done=!e.done; commit(); }  // v9.1: 할일 유형 완료 체크
 function toggleCk(eid,iid){ const e=S.events.find(e=>e.id===eid); const it=e.items.find(i=>i.id===iid); it.done=!it.done; commit(); }
 function addCk(eid,text){ S.events.find(e=>e.id===eid).items.push({id:uid(),text,done:false}); commit(); }
 
@@ -1719,7 +1725,7 @@ function findParent(kind, id){
        : kind==='td' ? S.todos.find(x=>x.id===id)
        : S.memos.find(x=>x.id===id);
 }
-function notesHTML(kind, item){
+function notesHTML(kind, item, rightHTML){
   const notes = item.notes || [];
   const key = kind + item.id;
   const list = notes.map(n=>{
@@ -1745,8 +1751,11 @@ function notesHTML(kind, item){
          onkeydown="if(event.key==='Enter'&&this.value.trim()){addNote('${kind}','${item.id}',this.value.trim());}">`
     : '';
   return `<div class="notes" style="display:${notes.length||noteOpen[key]?'flex':'none'}">${list}${input}</div>
-    <button class="chip note-add" onclick="toggleNoteInput('${kind}','${item.id}')" style="margin-top:6px">
-      ${noteOpen[key]?'입력 닫기':'＋ 하위 메모'}${notes.length?` (${notes.length})`:''}</button>`;
+    <div class="row" style="margin-top:6px;gap:6px">
+      <button class="chip note-add" onclick="toggleNoteInput('${kind}','${item.id}')">
+        ${noteOpen[key]?'입력 닫기':'＋ 하위 메모'}${notes.length?` (${notes.length})`:''}</button>
+      ${rightHTML?`<span style="margin-left:auto;display:flex;align-items:center;min-width:0">${rightHTML}</span>`:''}
+    </div>`;
 }
 function toggleNoteDone(kind,id,nid){          // 할 일 하위 메모 체크 (v8.6)
   const p = findParent(kind,id); if(!p || !p.notes) return;
@@ -2001,7 +2010,7 @@ function renderTodo(){
           <button class="x" title="취소" onpointerdown="event.preventDefault()" onclick="cancelInlineTodo()">✕</button>
         </div>
         <div class="sub" style="margin:4px 0 0 27px;font-size:10.5px">✓ 저장 · ✕ 취소 · Enter 줄바꿈 · 바깥을 탭하면 저장</div>
-        ${notesHTML('td', t)}
+        ${notesHTML('td', t, fmeta)}
       </div>`;
     }
     return `<div class="card" style="border-left:3px solid ${fObj?.color||'transparent'}">
@@ -2013,12 +2022,11 @@ function renderTodo(){
             <span class="dot" title="중요도 ${PRI[t.priority][0]}" style="background:${PRI[t.priority][1]};width:8px;height:8px"></span>
             ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
             <span class="sp"></span>
-            ${fmeta}
-            <button class="x" onclick="event.stopPropagation();delTodo('${t.id}')">✕</button>
           </div>
         </div>
+        <button class="x" onclick="delTodo('${t.id}')">✕</button>
       </div>
-      ${notesHTML('td', t)}
+      ${notesHTML('td', t, fmeta)}
     </div>`;
   }).join('');
   _selPool = selMode ? list.map(t=>t.id) : [];

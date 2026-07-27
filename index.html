@@ -183,7 +183,7 @@
   .tmeta .x{padding:2px 7px; font-size:12.5px; margin-left:0;}
   .tmeta .sp{flex:1;}
   .fmeta{display:flex; align-items:center; gap:4px; font-size:9.5px; color:var(--sub); cursor:pointer;
-    max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+    white-space:nowrap; flex-shrink:0;}  /* v9.3: 폴더명 풀네임 표시 (잘림 제거) */
   .fmeta .fdot{width:5px; height:5px; border-radius:5px; flex-shrink:0;}
   .todo input[type=checkbox]{width:18px; height:18px; accent-color:var(--blue); flex-shrink:0; padding:0;}
   .todo .t{flex:1; font-size:13px; white-space:pre-wrap; word-break:break-word;}
@@ -336,7 +336,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v9.2';
+const APP_VERSION = 'v9.3';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -1752,7 +1752,7 @@ function notesHTML(kind, item, rightHTML){
     <div class="row" style="margin-top:6px;gap:6px">
       <button class="chip note-add" onclick="toggleNoteInput('${kind}','${item.id}')">
         ${noteOpen[key]?'입력 닫기':'＋ 하위 메모'}${notes.length?` (${notes.length})`:''}</button>
-      ${rightHTML?`<span style="margin-left:auto;display:flex;align-items:center;min-width:0">${rightHTML}</span>`:''}
+      ${rightHTML?`<span style="margin-left:auto;display:flex;align-items:center;flex-shrink:0">${rightHTML}</span>`:''}
     </div>`;
 }
 function toggleNoteDone(kind,id,nid){          // 할 일 하위 메모 체크 (v8.6)

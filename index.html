@@ -182,9 +182,9 @@
   .tmeta .sub{font-size:11px;}
   .tmeta .x{padding:2px 7px; font-size:12.5px; margin-left:0;}
   .tmeta .sp{flex:1;}
-  .tmeta .fmeta{display:flex; align-items:center; gap:4px; font-size:10.5px; color:var(--sub);
+  .fmeta{display:flex; align-items:center; gap:4px; font-size:9.5px; color:var(--sub); cursor:pointer;
     max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .tmeta .fmeta .fdot{width:6px; height:6px;}
+  .fmeta .fdot{width:5px; height:5px; border-radius:5px; flex-shrink:0;}
   .todo input[type=checkbox]{width:18px; height:18px; accent-color:var(--blue); flex-shrink:0; padding:0;}
   .todo .t{flex:1; font-size:13px; white-space:pre-wrap; word-break:break-word;}
   .badge{font-size:10px; padding:2px 8px; border-radius:12px; background:var(--soft); color:var(--sub); flex-shrink:0;}
@@ -336,7 +336,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v9.1';
+const APP_VERSION = 'v9.2';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -1210,7 +1210,7 @@ function dayItems(k){
   ];
 }
 function chipHTML(e){
-  const c = e._td ? PRI[e.priority][1] : evColor(e);
+  const c = e._td ? ((S.todoFolders.find(f=>f.id===e.folderId)||{}).color||'#8E8E93') : evColor(e);  // v9.2: 마감 할 일 칩은 폴더 색
   const sh = e._sh ? '👥 ' : (e._gc ? 'Ⓖ ' : (e._td ? '☑ ' : ''));
   const drag = (!e._sh && !e._gc && !e._td) ? ` data-evid="${e.id}"` : '';
   if(!e._td && e.type==='allday')
@@ -1304,9 +1304,8 @@ function dayDetailHTML(){
   let detail = totalDay ? '' : `<div class="empty">일정이 없습니다.<br>＋ 버튼으로 추가하세요.</div>`;
 
   dayEvs.forEach(e=>{
-    const label = TYPES[e.type][0], c = evColor(e);
+    const c = evColor(e);
     const rl = repeatLabel(e);
-    const rep = rl ? ` · ${rl} 반복` : '';
     let extra = '';
     if(e.type==='checklist'){
       extra = (e.items||[]).map(it=>`
@@ -1325,11 +1324,12 @@ function dayDetailHTML(){
       <div class="row">
         ${lead}
         <b class="${e.type==='checklist'&&e.done?'done':''}" style="font-size:13px;flex:1">${esc(e.title)}</b>
+        ${e.type==='timed'?`<span class="sub" style="white-space:nowrap;flex-shrink:0">${e.start} – ${e.end}</span>`:''}
         <button class="x" title="수정" onclick="openEventSheet('${e.id}')">${ICO_EDIT}</button>
         <button class="x" title="공유" onclick="openShare('${e.id}')">👥</button>
         <button class="x" onclick="delEvent('${e.id}')">✕</button>
       </div>
-      <div class="sub" style="margin-left:16px">${label}${e.type==='timed'?` · ${e.start} – ${e.end}`:''}${rep}</div>
+      ${rl?`<div class="sub" style="margin-left:16px">${rl} 반복</div>`:''}
       ${extra}
       ${notesHTML('ev', e)}</div>`;
   });
@@ -1339,7 +1339,6 @@ function dayDetailHTML(){
     detail += `<div class="card" style="border-left:3px solid ${fObj?.color||'transparent'}">
       <div class="todo">
         <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
-        <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
         <span class="t ${t.done?'done':''}">☑ ${esc(t.title)}</span>
         <span class="sub">${esc(fObj?.name||'미지정')}</span>
         <button class="x" onclick="openEditTodo('${t.id}')">${ICO_EDIT}</button>
@@ -1599,11 +1598,10 @@ function openManual(){
   ${row('📁','폴더 이동','상단 칩 탭 · 폴더가 많으면 여러 줄로 표시 · 폴더 없는 할 일은 [미지정]에 모임')}
   ${row('📁²','폴더 관리','선택된 칩 한 번 더 탭 → 이름 · 색상 · 기본 폴더 · 삭제')}
   ${row('★','기본 폴더','지정 시 새 할 일이 자동으로 그 폴더에 · 미지정이면 [미지정]으로')}
-  ${row('●','중요도 점','정보줄의 점 색상 = 높음(빨강) · 중간(주황) · 낮음(초록)')}
-  ${row('⚙','필터 · 정렬','전체/미완료/완료(처음엔 미완료만 표시) · 생성/마감/우선순위순')}
+  ${row('⚙','필터 · 정렬','전체/미완료/완료(처음엔 미완료만 표시) · 생성순/마감일순')}
   ${row('⌨','하단 빠른 추가','아래 입력줄에 입력 후 ↑ 버튼으로 추가 · Enter는 줄바꿈 (PC는 Ctrl+Enter로 바로 추가) · 📁로 저장 폴더 선택 — 선택 안 하면 ★ 기본 폴더(없으면 미지정)로 저장')}
   ${row('✎','바로 수정','제목을 탭하면 그 자리에서 수정 · ✓ 저장 · ✕ 취소 · 다른 곳을 탭하면 자동 저장 · Enter는 줄바꿈 (PC는 Ctrl+Enter로 저장)')}
-  ${row('✎²','상세 수정','제목 아래 정보줄(중요도 점·마감일)을 탭 → 폴더 · 마감일 · 우선순위 (작성 중 닫으면 저장 여부 확인)')}
+  ${row('✎²','상세 수정','마감일 배지 또는 우측 하단 폴더명을 탭 → 폴더 · 마감일 변경 (작성 중 닫으면 저장 여부 확인)')}
   ${row('↳☑','하위 메모','체크박스로 세부 단계 완료 표시 · 내용을 탭하면 그 자리에서 바로 수정 (✓ 또는 다른 곳 탭 = 저장 · Enter 줄바꿈)')}
   ${row('☑²','일괄 삭제 · 이동','[선택] 탭 → 여러 개 체크 → 삭제 또는 폴더 이동')}
 
@@ -1968,7 +1966,7 @@ function renderTodo(){
     ${[['all','전체'],['open','미완료'],['done','완료']].map(([k,l])=>
       `<button class="chip ${todoFilter===k?'on':''}" onclick="todoFilter='${k}';render()">${l}</button>`).join('')}
     <select style="width:auto;font-size:12px;padding:6px 10px;margin-left:auto" onchange="todoSort=this.value;render()">
-      ${[['created','생성순'],['due','마감일순'],['priority','우선순위순']].map(([k,l])=>
+      ${[['created','생성순'],['due','마감일순']].map(([k,l])=>
         `<option value="${k}" ${todoSort===k?'selected':''}>${l}</option>`).join('')}
     </select>
     <button class="chip ${selMode?'on':''}" style="margin-left:6px"
@@ -1978,7 +1976,6 @@ function renderTodo(){
   let list = S.todos.filter(t=> todoFolder==='ALL' || (todoFolder==='NONE' ? isNoneFid('todo', t.folderId) : t.folderId===todoFolder))
     .filter(t=> todoFilter==='all'?true: todoFilter==='open'? !t.done : t.done);
   if(todoSort==='due') list=[...list].sort((a,b)=>(a.due||'9999').localeCompare(b.due||'9999'));
-  else if(todoSort==='priority'){ const r={high:0,mid:1,low:2}; list=[...list].sort((a,b)=>r[a.priority]-r[b.priority]); }
   else list=[...list].sort((a,b)=>a.created-b.created);
 
   const tk = todayKey();
@@ -1986,14 +1983,13 @@ function renderTodo(){
     const over = t.due && !t.done && t.due < tk;
     const fObj = folders.find(f=>f.id===t.folderId);
     const folder = todoFolder==='ALL' ? `<span class="sub">${esc(fObj?.name||'미지정')}</span>` : '';
-    const fmeta = `<span class="fmeta"><span class="fdot" style="background:${fObj?.color||'#8E8E93'}"></span>${esc(fObj?.name||'미지정')}</span>`;  // v9.0: 우측 작은 폴더 표시
+    const fmeta = `<span class="fmeta" onclick="openEditTodo('${t.id}')" title="상세 수정"><span class="fdot" style="background:${fObj?.color||'#8E8E93'}"></span>${esc(fObj?.name||'미지정')}</span>`;  // v9.2: 우측 하단 폴더 = 색 점 + 작은 이름, 탭=상세 수정
     if(selMode){
       const on = selIds.has(t.id);
       return `<div class="card" onclick="toggleSel('${t.id}')"
         style="border-left:3px solid ${fObj?.color||'transparent'};${on?'background:var(--blue-soft);':''}cursor:pointer">
         <div class="todo">
           <span class="selring ${on?'on':''}"></span>
-          <span class="dot" style="background:${PRI[t.priority][1]};width:7px;height:7px"></span>
           <span class="t ${t.done?'done':''}">${esc(t.title)}</span>
           ${folder}
           ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
@@ -2018,11 +2014,10 @@ function renderTodo(){
         <input type="checkbox" ${t.done?'checked':''} onchange="toggleTodo('${t.id}')">
         <div class="tcol">
           <span class="t ${t.done?'done':''}" onclick="startInlineTodo('${t.id}')">${esc(t.title)}</span>
-          <div class="tmeta" onclick="openEditTodo('${t.id}')" title="상세 수정" style="cursor:pointer">
-            <span class="dot" title="중요도 ${PRI[t.priority][0]}" style="background:${PRI[t.priority][1]};width:8px;height:8px"></span>
-            ${t.due?`<span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>`:''}
+          ${t.due?`<div class="tmeta" onclick="openEditTodo('${t.id}')" title="상세 수정" style="cursor:pointer">
+            <span class="badge ${over?'over':''}">${t.due.slice(5).replace('-','/')}</span>
             <span class="sp"></span>
-          </div>
+          </div>`:''}
         </div>
         <button class="x" onclick="delTodo('${t.id}')">✕</button>
       </div>
@@ -2117,7 +2112,7 @@ function promptTodoFolder(){
 }
 function openEditTodo(id){
   const t = S.todos.find(x=>x.id===id); if(!t) return;
-  let pri = t.priority, fid = validFid('todo', t.folderId);
+  let fid = validFid('todo', t.folderId);
   const html = () => `
     <h3>할 일 수정</h3>
     <textarea id="et-title" rows="2" placeholder="할 일 제목 (여러 줄 입력 가능)" oninput="qaGrow(this)"
@@ -2128,8 +2123,6 @@ function openEditTodo(id){
     <div class="chips" style="align-items:center">
       <span class="sub" style="font-size:12px;flex-shrink:0">마감일</span>
       <input type="date" id="et-due" value="${t.due||''}" placeholder="마감일" style="width:auto;font-size:12px;padding:7px 10px">
-      ${Object.entries(PRI).map(([k,[l]])=>
-        `<button class="chip ${pri===k?'on':''}" onclick="window._etPri('${k}')">${l}</button>`).join('')}
     </div>
     <button class="btn" onclick="window._etSubmit()">저장</button>`;
   const keep = fn => {
@@ -2138,11 +2131,10 @@ function openEditTodo(id){
     document.getElementById('et-title').value=ti; document.getElementById('et-due').value=d;
   };
   window._etFid = v => keep(()=>fid=v);
-  window._etPri = v => keep(()=>pri=v);
   window._etSubmit = () => {
     const title = document.getElementById('et-title').value.trim();
     if(!title){ appAlert('제목을 입력하세요.'); return; }
-    t.title = title; t.folderId = fid || null; t.priority = pri;
+    t.title = title; t.folderId = fid || null;
     t.due = document.getElementById('et-due').value || '';
     sheetSaved(); commit();
   };
@@ -2152,14 +2144,14 @@ function openEditTodo(id){
       const el = document.getElementById('et-title'); if(!el) return false;
       return (el.value||'').trim() !== t.title
         || (document.getElementById('et-due')?.value||'') !== (t.due||'')
-        || fid !== validFid('todo', t.folderId) || pri !== t.priority;
+        || fid !== validFid('todo', t.folderId);
     },
     save(){ window._etSubmit(); }
   };
 }
 
 function openAddTodo(){
-  let pri='mid', fid = newItemFid('todo', todoFolder);
+  let fid = newItemFid('todo', todoFolder);
   const html = () => `
     <h3>새 할 일</h3>
     <textarea id="at-title" rows="2" placeholder="할 일 제목 (여러 줄 입력 가능)" oninput="qaGrow(this)"
@@ -2170,18 +2162,15 @@ function openAddTodo(){
     <div class="chips" style="align-items:center">
       <span class="sub" style="font-size:12px;flex-shrink:0">마감일</span>
       <input type="date" id="at-due" placeholder="마감일" style="width:auto;font-size:12px;padding:7px 10px">
-      ${Object.entries(PRI).map(([k,[l]])=>
-        `<button class="chip ${pri===k?'on':''}" onclick="window._setPri('${k}')">${l}</button>`).join('')}
     </div>
     <button class="btn" onclick="window._submitTodo()">추가</button>`;
   const keep = fn => { const t=document.getElementById('at-title').value, d=document.getElementById('at-due').value;
     fn(); openSheetHTML(html()); document.getElementById('at-title').value=t; document.getElementById('at-due').value=d; };
   window._setFid = id => keep(()=>fid=id);
-  window._setPri = p => keep(()=>pri=p);
   window._submitTodo = () => {
     const title = document.getElementById('at-title').value.trim();
     if(!title){ appAlert('제목을 입력하세요.'); return; }
-    S.todos.push({id:uid(),folderId:fid||null,title,done:false,due:document.getElementById('at-due').value||'',priority:pri,created:Date.now()});
+    S.todos.push({id:uid(),folderId:fid||null,title,done:false,due:document.getElementById('at-due').value||'',priority:'mid',created:Date.now()});
     sheetSaved(); commit();
   };
   openSheetHTML(html());
@@ -2408,7 +2397,7 @@ function searchResultsHTML(q){
     </div>`).join('');
   if(td.length) h += `<div class="sec">할 일</div>` + td.map(t=>`
     <div class="card row" onclick="jumpTodo('${t.folderId}')">
-      <span class="dot" style="background:${PRI[t.priority][1]}"></span>
+      <span class="dot" style="background:${(S.todoFolders.find(f=>f.id===t.folderId)||{}).color||'#8E8E93'}"></span>
       <span style="flex:1;font-size:13px">${esc(t.title)}</span>
       <span class="sub">${esc(S.todoFolders.find(f=>f.id===t.folderId)?.name||'미지정')}</span>
     </div>`).join('');

@@ -147,7 +147,7 @@
     background:var(--border); border:1px solid var(--border);
     border-radius:14px; overflow:hidden;
   }
-  .cell{background:var(--card); min-height:58px; padding:3px; font-size:11px;}
+  .cell{background:var(--card); height:64px; overflow:hidden; padding:3px; font-size:11px;}  /* v9.4: 션 높이 고정 */
   .cell.sel{background:var(--blue-soft);}
   .cell .d{
     display:inline-block; min-width:19px; text-align:center; border-radius:10px;
@@ -336,7 +336,7 @@ const store = {
   set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ mem[k]=v; } }
 };
 const KEY = 'planner_web_v1';
-const APP_VERSION = 'v9.3';
+const APP_VERSION = 'v9.4';
 
 /* ================= 상태 ================= */
 const pad = n => String(n).padStart(2,'0');
@@ -536,7 +536,14 @@ function _endDrag(e, doDrop){
       const to = cell.dataset.key;
       if(!ev || !to) return;
       if(!normRepeat(ev)){
-        if(ev.date !== to){ ev.date = to; gmark(ev); selDate = to; commit(); }
+        if(ev.date !== to){
+          if(ev.endDate){                                   // v9.4: 기간 일정은 종료일도 함께 이동
+            const delta = Math.round((new Date(to+'T00:00') - new Date(ev.date+'T00:00'))/86400000);
+            const d = new Date(ev.endDate+'T00:00'); d.setDate(d.getDate()+delta);
+            ev.endDate = keyOf(d.getFullYear(), d.getMonth(), d.getDate());
+          }
+          ev.date = to; gmark(ev); selDate = to; commit();
+        }
       } else if(from && from !== to){
         openMoveScopeSheet(id, from, to); // 반복 일정: 이동 범위 선택
       }
@@ -657,14 +664,15 @@ function gcalBody(e){
   let start, end;
   if(e.type==='timed' && e.start){
     start = { dateTime: `${e.date}T${e.start}:00`, timeZone: tz };
-    let ed = e.date, et = e.end;
-    if(!et || et <= e.start){ // 종료가 없거나 시작 이전이면 +1시간
+    let ed = (e.endDate && e.endDate > e.date) ? e.endDate : e.date, et = e.end; // v9.4: 기간 일정
+    if(!et || (ed === e.date && et <= e.start)){ // 종료가 없거나 시작 이전이면 +1시간
       const d = new Date(`${e.date}T${e.start}:00`); d.setHours(d.getHours()+1);
       ed = keyOf(d.getFullYear(), d.getMonth(), d.getDate()); et = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
     end = { dateTime: `${ed}T${et}:00`, timeZone: tz };
   } else { // 종일·메모·체크형은 종일 일정으로
-    start = { date: e.date }; end = { date: nextDayKey(e.date) };
+    start = { date: e.date };
+    end = { date: nextDayKey((e.endDate && e.endDate > e.date) ? e.endDate : e.date) }; // v9.4
   }
   const body = { summary: e.title, start, end };
   const rr = rruleOf(e), rec = [];
@@ -1140,7 +1148,7 @@ function normRepeat(e){
 }
 function occursOn(e, k){
   const r = normRepeat(e);
-  if(!r) return e.date===k;
+  if(!r) return e.endDate ? (k >= e.date && k <= e.endDate) : e.date===k;  // v9.4: 기간 일정
   if(k < e.date) return false;
   if(r.until && k > r.until) return false;
   if((e.exDates||[]).includes(k)) return false;
@@ -1205,7 +1213,7 @@ function dayItems(k){
   return [
     ...S.events.filter(e=>occursOn(e,k)),
     ...sharedEvents.filter(e=>e.date===k),
-    ...gcalEvents.filter(e=>e.date===k),
+    ...gcalEvents.filter(e=> e.endDate ? (k>=e.date && k<=e.endDate) : e.date===k),
     ...S.todos.filter(t=>t.due===k && !t.done).map(t=>({ ...t, _td:true })),
   ];
 }
@@ -1298,7 +1306,7 @@ function weekListHTML(){
 function dayDetailHTML(){
   const dayEvs = S.events.filter(e=>occursOn(e, selDate));
   const sharedDay = sharedEvents.filter(e=>e.date===selDate);
-  const gcalDay = gcalEvents.filter(e=>e.date===selDate);
+  const gcalDay = gcalEvents.filter(e=> e.endDate ? (selDate>=e.date && selDate<=e.endDate) : e.date===selDate);
   const dueTodos = S.todos.filter(t=>t.due===selDate);
   const totalDay = dayEvs.length + sharedDay.length + gcalDay.length + dueTodos.length;
   let detail = totalDay ? '' : `<div class="empty">일정이 없습니다.<br>＋ 버튼으로 추가하세요.</div>`;
@@ -1330,6 +1338,7 @@ function dayDetailHTML(){
         <button class="x" onclick="delEvent('${e.id}')">✕</button>
       </div>
       ${rl?`<div class="sub" style="margin-left:16px">${rl} 반복</div>`:''}
+      ${(!rl && e.endDate)?`<div class="sub" style="margin-left:16px">${e.date.replaceAll('-','. ')} – ${e.endDate.replaceAll('-','. ')}</div>`:''}
       ${extra}
       ${notesHTML('ev', e)}</div>`;
   });
@@ -1353,7 +1362,7 @@ function dayDetailHTML(){
         <span class="dot" style="background:${e.color||'#34A853'}"></span>
         <b style="font-size:13px;flex:1">Ⓖ ${esc(e.title)}</b>
       </div>
-      <div class="sub" style="margin-left:16px">구글 캘린더${e._acc?` · ${esc(e._acc)}`:''}${e.type==='timed'?` · ${e.start} – ${e.end}`:' · 종일'}</div>
+      <div class="sub" style="margin-left:16px">구글 캘린더${e._acc?` · ${esc(e._acc)}`:''}${e._cal?` · ${esc(e._cal)}`:''}${e.type==='timed'?` · ${e.start} – ${e.end}`:(e.endDate?` · ${e.date.replaceAll('-','. ')} – ${e.endDate.replaceAll('-','. ')}`:' · 종일')}</div>
     </div>`;
   });
 
@@ -1581,6 +1590,7 @@ function openManual(){
 
   <div class="sec">📅 달력</div>
   ${row('＋','일정 추가','＋ 버튼 또는 선택된 날짜 칸을 한 번 더 탭 · 유형 · 색상 · 반복(매일·매주 요일 선택·매월 날짜/N째 요일·매년 + 간격·종료일·횟수)')}
+  ${row('↔','기간 일정','시작일 → 종료일을 지정하면 여러 날에 걸쳐 표시 (반복과 동시 사용 불가 · 끌어서 이동하면 기간이 통째로 이동)')}
   ${row('◧','유형별 표시','종일=색 배경 · 시간=점+시각 · 메모=✔ · 할일=☐(완료 체크 시 ☑)')}
   ${row('☐','할일 유형','상세보기에서 체크박스로 완료 표시 · [항목 추가]로 세부 항목도 체크 가능')}
   ${row('🔁','반복 개별 관리','반복 일정의 ✎ · ✕ → [이 일정만] 또는 [모든 반복] 선택')}
@@ -1590,7 +1600,7 @@ function openManual(){
   ${row('☑','마감 할 일','마감일 있는 할 일이 달력에 자동 표시')}
   ${row('🇰🇷','공휴일','한국 공휴일 자동 표시 · 대체공휴일 포함 (2025~2028 확정, 이후 고정일만)')}
   ${row('👥','공유','상대를 초대하면 서로 댓글 가능')}
-  ${row('Ⓖ','구글 일정','여러 구글 계정 연결 가능 · 계정별 색상으로 표시 (읽기 전용)')}
+  ${row('Ⓖ','구글 일정','여러 구글 계정 연결 가능 · 계정별 색상으로 표시 (읽기 전용) · 공유받은 캘린더 포함 · 상세보기에 계정·캘린더 이름 표시')}
   ${row('⟳','당겨서 새로고침','달력 화면 맨 위에서 아래로 당기면 연결된 구글 캘린더를 다시 불러옴')}
   ${row('✕','닫을 때 확인','일정 작성·수정 중에 닫으면 변경사항을 저장할지 확인 (v8.6)')}
 
@@ -1610,7 +1620,8 @@ function openManual(){
   ${row('★','기본 폴더','칩 재탭 → 폴더 관리에서 지정 · 새 메모가 자동 분류')}
   ${row('⌨','하단 빠른 추가','아래 입력줄에 입력 후 ↑ 버튼으로 저장 · Enter는 줄바꿈 · 📁로 저장 폴더 선택')}
   ${row('📂','폴더 지정','에디터 상단 칩으로 작성 · 수정 중 언제든 폴더 변경')}
-  ${row('✍','저장 방식','제목 없이 내용만 작성 (목록에는 첫 줄 표시) · ✓ 버튼으로 저장 · 닫을 때 변경사항이 있으면 저장 여부 확인 · 빈 메모(공백만)는 저장되지 않음')}
+  ${row('✍','저장 방식','제목 없이 내용만 작성 (목록에는 첫 줄 표시) · ✓ 버튼으로 저장(저장 완료 안내 표시) · 닫을 때 변경사항이 있으면 저장 여부 확인 · 빈 메모(공백만)는 저장되지 않음')}
+  ${row('⏱','자동 저장','작성 · 수정 중 2분 간격으로 변경분을 자동 저장 (자동 저장 시 상단에 "자동 저장됨" 표시)')}
   ${row('✕','빠른 삭제','목록의 ✕ 버튼으로 바로 휴지통 이동')}
   ${row('↳','하위 메모','일정 · 할 일 · 메모 어디든 부속 메모 추가 · 탭하면 수정')}
   ${row('☑²','일괄 삭제 · 이동','[선택] 칩 → 여러 개 체크 → 삭제 또는 폴더 이동')}
@@ -1806,6 +1817,7 @@ function openEventSheet(editId, scope){
     return;
   }
   const detach = scope==='one';
+  let edateVal = detach ? '' : (orig && orig.endDate) || '';   // v9.4: 종료일(기간 일정)
   let type = orig ? orig.type : 'allday';
   let color = (orig && orig.color) || PALETTE[0];
   let dateVal = detach ? selDate : (orig ? orig.date : selDate);
@@ -1846,7 +1858,12 @@ function openEventSheet(editId, scope){
   };
   const html = () => `
     <h3>${detach ? '이 일정만 수정' : orig ? '일정 수정' : selDate.replaceAll('-','. ')+' 일정 추가'}</h3>
-    <input type="date" id="ae-date" value="${dateVal}" onchange="window._aeDate(this.value)" style="margin-bottom:10px">
+    <div class="row" style="margin-bottom:10px;align-items:center;gap:6px">
+      <input type="date" id="ae-date" value="${dateVal}" onchange="window._aeDate(this.value)">
+      ${(!r && !detach) ? `<span class="sub" style="flex-shrink:0">→</span>
+      <input type="date" id="ae-edate" value="${edateVal}" onchange="window._aeEdate(this.value)" title="종료일 (선택)">` : ''}
+    </div>
+    ${(!r && !detach) ? `<p class="sub" style="margin:-6px 0 10px;font-size:11px">종료일은 선택 사항 — 지정하면 여러 날에 걸친 일정 (반복과 동시 사용 불가)</p>` : ''}
     <div class="chips">${Object.entries(TYPES).map(([k,[l]])=>
       `<button class="chip ${type===k?'on':''}" onclick="window._setType('${k}')">${l}</button>`).join('')}</div>
     <input id="ae-title" placeholder="제목" value="${orig ? esc(orig.title) : ''}" style="margin-bottom:10px">
@@ -1865,13 +1882,14 @@ function openEventSheet(editId, scope){
       `<button class="sw ${color===c?'on':''}" style="background:${c}" onclick="window._setColor('${c}')"></button>`).join('')}<button class="sw rainbow" title="직접 선택" onclick="window._pickColor()"></button></div>
     <button class="btn" onclick="window._submitEvent()">${orig && !detach ? '저장' : detach ? '이 일정만 저장' : '추가'}</button>`;
   const val = id => { const el = document.getElementById(id); return el ? el.value : null; };
-  const snap = () => ({ti:val('ae-title'), dt:val('ae-date'), s:val('ae-start'), en:val('ae-end'),
+  const snap = () => ({ti:val('ae-title'), dt:val('ae-date'), ed:val('ae-edate'), s:val('ae-start'), en:val('ae-end'),
     iv:val('ae-iv'), ut:val('ae-until'), ct:val('ae-cnt')});
   const restore = o => { const set=(id,v)=>{ const el=document.getElementById(id); if(el && v!=null) el.value=v; };
-    set('ae-title',o.ti); set('ae-date',o.dt); set('ae-start',o.s); set('ae-end',o.en);
+    set('ae-title',o.ti); set('ae-date',o.dt); set('ae-edate',o.ed); set('ae-start',o.s); set('ae-end',o.en);
     set('ae-iv',o.iv); set('ae-until',o.ut); set('ae-cnt',o.ct); };
   const keep = fn => { const o = snap(); fn(); openSheetHTML(html()); restore(o); };
   window._aeDate = v => keep(()=>{ if(v) dateVal = v; });
+  window._aeEdate = v => { edateVal = v || ''; };            // v9.4 (재렌더 불필요)
   window._setType = t => keep(()=>type=t);
   window._setColor = c => keep(()=>color=c);
   window._setFreq = f => keep(()=>{
@@ -1908,6 +1926,11 @@ function openEventSheet(editId, scope){
         if(c > 0){ rep.count = c; const u = untilFromCount(date, rep, c); if(u) rep.until = u; }
       }
     }
+    let edate = null;                                       // v9.4: 종료일(반복 없는 일정만)
+    if(!rep && !detach){
+      const ee = val('ae-edate');
+      if(ee && ee > date) edate = ee;
+    }
     if(detach){
       /* 시리즈에서 이 날짜 제외 + 단일 일정으로 분리 */
       (orig.exDates = orig.exDates||[]).push(selDate);
@@ -1919,6 +1942,7 @@ function openEventSheet(editId, scope){
     } else if(orig){
       orig.title = title; orig.date = date; orig.type = type; orig.color = color;
       orig.repeat = rep;
+      if(edate) orig.endDate = edate; else delete orig.endDate;   // v9.4
       if(!rep) delete orig.exDates;
       if(type==='timed'){ orig.start = val('ae-start'); orig.end = val('ae-end'); }
       if(type==='checklist' && !orig.items) orig.items = [];
@@ -1926,6 +1950,7 @@ function openEventSheet(editId, scope){
     } else {
       const ev = {id:uid(), date, type, title, color};
       if(rep) ev.repeat = rep;
+      if(edate) ev.endDate = edate;                               // v9.4
       if(type==='timed'){ ev.start = val('ae-start'); ev.end = val('ae-end'); }
       if(type==='checklist') ev.items = [];
       S.events.push(ev);
@@ -1939,6 +1964,7 @@ function openEventSheet(editId, scope){
   /* 작성 중 닫기 확인 (v8.6) */
   const _init = { type, color };
   const _base = { title: orig ? orig.title : '', date: detach ? selDate : (orig ? orig.date : selDate),
+    edate: detach ? '' : (orig && orig.endDate) || '',
     start: (orig && orig.start) || '09:00', end: (orig && orig.end) || '10:00' };
   _sheetGuard = {
     dirty(){
@@ -1946,6 +1972,7 @@ function openEventSheet(editId, scope){
       const t = (el.value||'').trim();
       if(!orig) return !!t;
       return t !== _base.title || (val('ae-date')||'') !== _base.date
+        || (val('ae-edate')||'') !== _base.edate
         || type !== _init.type || color !== _init.color
         || (type==='timed' && ((val('ae-start')||'') !== _base.start || (val('ae-end')||'') !== _base.end));
     },
@@ -2256,6 +2283,7 @@ function _openEditorUI(b, upd, pinned){
   if(!ed.classList.contains('open')){ _ovEditor=true; _pushOv(); }
   ed.classList.add('open');
   hardenInputs();
+  _edAutoStart();                                    // v9.4: 2분 간격 자동 저장
 }
 function renderEdFolders(){                          // 에디터 내 폴더 선택 칩 (v8.6)
   const box = document.getElementById('ed-folders'); if(!box) return;
@@ -2275,26 +2303,40 @@ function _memoFieldVals(){
   const bo = document.getElementById('ed-body');
   return { b: bo ? bo.value : '' };
 }
-function saveMemoNow(){                              // ✓ 저장 (열린 채 유지)
+function saveMemoNow(silent){                        // ✓ 저장 (열린 채 유지) · silent=자동 저장(v9.4)
   const { b } = _memoFieldVals();
   if(edDraft){
-    if(!b.trim()){ appAlert('내용을 입력하세요.', '메모 저장'); return; }
+    if(!b.trim()){ if(!silent) appAlert('내용을 입력하세요.', '메모 저장'); return; }
     const m = { id: edDraft.id, folderId: edFid||null, title: '', body: b, pinned: edDraft.pinned, updated: nowStr() };
     S.memos.unshift(m);
     curMemoId = m.id; edDraft = null;
     save();
     edSnap = { b, f: edFid };
-    document.getElementById('ed-updated').textContent = '수정: '+m.updated;
+    document.getElementById('ed-updated').textContent = (silent?'자동 저장됨 · ':'수정: ')+m.updated;
     renderEditorNotes();
+    if(!silent) appAlert('저장되었습니다.', '메모 저장');   // v9.4
     return;
   }
   const m = S.memos.find(x=>x.id===curMemoId); if(!m) return;
   m.title = ''; m.body = b; m.folderId = edFid||null; m.updated = nowStr();
   save();
   edSnap = { b, f: edFid };
-  document.getElementById('ed-updated').textContent = '수정: '+m.updated;
+  document.getElementById('ed-updated').textContent = (silent?'자동 저장됨 · ':'수정: ')+m.updated;
+  if(!silent) appAlert('저장되었습니다.', '메모 저장');     // v9.4
+}
+/* 메모 자동 저장 (v9.4): 에디터가 열려 있는 동안 2분 간격으로 변경분만 조용히 저장 */
+let _edAutoTimer = null;
+function _edAutoStart(){ _edAutoStop(); _edAutoTimer = setInterval(_edAutoSave, 120000); }
+function _edAutoStop(){ if(_edAutoTimer){ clearInterval(_edAutoTimer); _edAutoTimer = null; } }
+function _edAutoSave(){
+  const ed = document.getElementById('editor');
+  if(!ed || !ed.classList.contains('open')){ _edAutoStop(); return; }
+  const { b } = _memoFieldVals();
+  if(edDraft){ if(b.trim()) saveMemoNow(true); return; }          // 새 메모: 내용이 있으면 자동 저장
+  if(curMemoId && (b !== edSnap.b || edFid !== edSnap.f)) saveMemoNow(true);
 }
 function _editorCloseFlow(){                          // 닫기 공통 (뒤로가기 포함)
+  _edAutoStop();                                      // v9.4
   const { b } = _memoFieldVals();
   const ed = document.getElementById('editor');
   if(edDraft){
@@ -2335,6 +2377,7 @@ function togglePin(){
   document.getElementById('pin-btn').style.opacity = m.pinned? '1':'0.4';
 }
 function _forceCloseEditor(){
+  _edAutoStop();                                      // v9.4
   document.getElementById('editor').classList.remove('open');
   if(_ovEditor){ _ovEditor=false; _consumeOv(); }
   render();
@@ -2721,35 +2764,75 @@ if (FIREBASE_CONFIG.apiKey) {
       const now = new Date();
       const tMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
       const tMax = new Date(now.getFullYear(), now.getMonth() + 3, 1).toISOString();
-      const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
-        + `?timeMin=${encodeURIComponent(tMin)}&timeMax=${encodeURIComponent(tMax)}`
-        + '&singleEvents=true&orderBy=startTime&maxResults=250';
-      let r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
-      if ((r.status === 401 || r.status === 403) && cached) { // 캐시 토큰 만료 → 팝업으로 1회 재시도
-        delete _rTok[hint];
-        const a = await gcalReadAuth(hint); token = a.token; email = a.email;
-        r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
-      }
-      if (!r.ok) {
-        throw new Error('Calendar API ' + r.status
-          + ' — Google Cloud 콘솔에서 "Google Calendar API" 사용 설정이 필요할 수 있습니다.');
-      }
-      const j = await r.json();
+      let retried = false;
+      const authed = async (url) => {                       // 캐시 토큰 만료 → 팝업으로 1회 재시도
+        let r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+        if ((r.status === 401 || r.status === 403) && cached && !retried) {
+          retried = true;
+          delete _rTok[hint];
+          const a = await gcalReadAuth(hint); token = a.token; email = a.email;
+          r = await fetch(url, { headers: { Authorization: 'Bearer ' + token } });
+        }
+        return r;
+      };
+      /* v9.4: 기본 캘린더뿐 아니라 이 계정이 구글 캘린더에서 보는 모든 캘린더
+         (공유받은 캘린더 포함)를 불러옴. 생일·공휴일 캘린더는 제외. */
+      let cals = [{ id: 'primary', primary: true }];
+      try {
+        const lr = await authed('https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=50');
+        if (lr.ok) {
+          const lj = await lr.json();
+          const items = (lj.items || []).filter(c =>
+            c.selected !== false                            // 구글 캘린더에서 표시 중인 캘린더만
+            && !String(c.id).includes('#contacts')          // 생일 캘린더 제외
+            && !String(c.id).includes('#holiday')           // 공휴일 캘린더 제외(앱 자체 표시와 중복)
+            && !String(c.id).includes('#weeknum'));
+          if (items.length) cals = items;
+        }
+      } catch (_) {}
       const own = new Set((window.getState().events || []).map(ev => ev.gcalId).filter(Boolean)); // 앱에서 올린 일정은 중복 표시 제외
-      const list = (j.items || []).filter(it =>
-        !own.has(it.id) && !(it.recurringEventId && own.has(it.recurringEventId))
-      ).map(it => {
-        const allday = !!(it.start && it.start.date);
-        const date = allday ? it.start.date : String(it.start && it.start.dateTime || '').slice(0, 10);
-        return {
-          id: 'g' + it.id, date,
-          type: allday ? 'allday' : 'timed',
-          title: it.summary || '(제목 없음)',
-          start: allday ? '' : String(it.start.dateTime).slice(11, 16),
-          end: allday ? '' : String(it.end && it.end.dateTime || '').slice(11, 16),
-          _gc: true
-        };
-      }).filter(e => e.date);
+      const fmtK = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      const list = [];
+      let apiErr = null;
+      for (const cal of cals) {
+        const url = 'https://www.googleapis.com/calendar/v3/calendars/' + encodeURIComponent(cal.id) + '/events'
+          + `?timeMin=${encodeURIComponent(tMin)}&timeMax=${encodeURIComponent(tMax)}`
+          + '&singleEvents=true&orderBy=startTime&maxResults=250';
+        let r;
+        try { r = await authed(url); } catch (e) { apiErr = apiErr || e; continue; }
+        if (!r.ok) {
+          const err = new Error('Calendar API ' + r.status
+            + ' — Google Cloud 콘솔에서 "Google Calendar API" 사용 설정이 필요할 수 있습니다.');
+          if (cal.primary || cals.length === 1) throw err;   // 기본 캘린더 실패는 오류로
+          apiErr = apiErr || err; continue;                  // 접근 불가한 공유 캘린더는 건너뜀
+        }
+        const j = await r.json();
+        const calName = cal.primary ? '' : (cal.summaryOverride || cal.summary || '');
+        (j.items || []).forEach(it => {
+          if (!it.start) return;
+          if (own.has(it.id) || (it.recurringEventId && own.has(it.recurringEventId))) return;
+          const allday = !!it.start.date;
+          const date = allday ? it.start.date : String(it.start.dateTime || '').slice(0, 10);
+          if (!date) return;
+          const e = {
+            id: 'g' + cal.id + '_' + it.id, date,
+            type: allday ? 'allday' : 'timed',
+            title: it.summary || '(제목 없음)',
+            start: allday ? '' : String(it.start.dateTime).slice(11, 16),
+            end: allday ? '' : String(it.end && it.end.dateTime || '').slice(11, 16),
+            _cal: calName,
+            _gc: true
+          };
+          if (allday && it.end && it.end.date) {             // v9.4: 여러 날 종일 일정 (end.date는 배타적)
+            const d = new Date(it.end.date + 'T00:00'); d.setDate(d.getDate() - 1);
+            const ek = fmtK(d);
+            if (ek > date) e.endDate = ek;
+          }
+          list.push(e);
+        });
+      }
+      if (!list.length && apiErr) throw apiErr;
+      list.sort((a, b) => (a.date + (a.start || '')).localeCompare(b.date + (b.start || '')));
       window.setGcalAccount(email, list);
       return { email, count: list.length };
     };
